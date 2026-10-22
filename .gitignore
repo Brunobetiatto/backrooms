@@ -1,0 +1,10 @@
+# player save data (written by the game at runtime)
+achievements.txt
+best.txt
+best_fuga.txt
+progress.txt
+settings.txt
+
+# Processing build output
+application.*/
+out/
