@@ -126,13 +126,22 @@ final float CAN_HEAR    = 8;          // rooms a loud clank carries (x each nerd
 final int   MAX_CANS    = 8;
 final int   START_CANS  = 2;          // empty cans you start every run with
 
+// ---------------- the blessing of Cabral ----------------
+final int   SECRETS     = 3;          // secret passages per map (one hides the pizza while this phase's is uneaten)
+final int   SECRET_NEAR = 14;         // prefer dead ends within this many rooms of the start
+final float PIZZA_BONUS = 0.08;       // Pizza do Papponi: +8% max stamina each, forever
+final int   PHASES      = 9;          // POLIWEEK days 0-5, VS. 6, RECUPERAÇÃO, ENDLESS: one pizza each
+final float REVEAL_TIME = 1.0;        // seconds of flashlight on the wall to open it
+
 // ---------------- wall writings ----------------
 final String[] WALL_MSGS = {
   "CADE MINHAS\nHORAS CABRAL",
   "O FRANK FEZ\nELE TRANCAR...",
   "O QUE ACONTECEU\nCOM O GUSTAVO DO MAL",
-  "NAO FALE SOBRE\nOUTER WILDS COM O VITOR"
+  "NAO FALE SOBRE\nOUTER WILDS COM O VITOR",
+  "ILUMINE A ESCURIDAO\nE RECEBA A BENCAO\nDO CABRAL"
 };
+final int CABRAL_MSG = 4;           // placed once in every run, near the start
 final int DECALS = 9;
 
 // ---------------- nextbot AI ----------------
@@ -295,6 +304,20 @@ class Can {
 ArrayList<Can> cans = new ArrayList<Can>();
 PShape canModel;
 AudioSample[] clanks;
+
+// a dark dead end hiding a passage: shine your flashlight on its far wall
+class Secret {
+  int di, dj;          // the dead end
+  int wi, wj;          // the wall cell that opens into the hidden nook
+  float light;         // how long it's been in your beam
+  boolean open, pizza, eaten;
+  Decal mark;          // Cabral's sun painted on the wall: in the dark it only shows under the flashlight
+}
+
+ArrayList<Secret> secrets = new ArrayList<Secret>();
+boolean[] pizzaGot = new boolean[PHASES];   // saved: which phases' pizza you've eaten
+PShape pizzaModel;
+PImage cabralMark;
 
 class Particle {
   float x, y, vx, vy, life, sz;
@@ -890,9 +913,11 @@ void setup() {
   staticImg = createImage(240, 150, RGB);
   for (int k = 0; k < ITEM_NAMES.length; k++) itemTex[k] = makeItem(k);
   canModel = loadCan("monster.obj");
+  pizzaModel = loadModel("pizza.obj", "pizza.jpg");
   clanks = makeClanks();
   for (int k = 0; k < WALL_MSGS.length; k++) graffiti[k] = makeGraffiti(WALL_MSGS[k], 100 + k);
   certTex = makeCert();
+  cabralMark = makeCabralMark();
   exitTex = makeExit();
   arrowTex = makeArrow();
   pucprBg = loadPucpr();
@@ -1112,6 +1137,7 @@ void loadSaves() {
       } else if (k.equals("final")) finalBeaten = v.equals("1");
       else if (k.equals("msgs")) readBits(v, msgSeen);
       else if (k.equals("items")) readBits(v, itemSeen);
+      else if (k.equals("pizza")) readBits(v, pizzaGot);
       else if (k.equals("stats")) {
         String[] p = split(v, ',');
         if (p.length >= 9) {
@@ -1149,6 +1175,7 @@ void saveProgress() {
   L.add("endless=" + (endlessUnlocked ? 1 : 0));
   L.add("msgs=" + bits(msgSeen));
   L.add("items=" + bits(itemSeen));
+  L.add("pizza=" + bits(pizzaGot));
   L.add("stats=" + totalRuns + "," + totalDeaths + "," + totalTime + "," + totalItems + "," + totalConsumed + ","
     + totalStuns + "," + totalEscapes + "," + totalCerts + "," + totalWins);
   saveStrings("progress.txt", L.toArray(new String[0]));
@@ -1291,8 +1318,10 @@ void startRun(int mode, int entry) {
   parts.clear();
   int nDrops = round(DROPS * mapScale());
   for (int k = 0; k < nDrops; k++) spawnDrop();
+  placeSecrets();
   placeDecals();
   placeProps();
+  markSecrets();
   certs.clear();
   certsTaken = 0;
   exitOpen = false;
@@ -1333,7 +1362,7 @@ void startRun(int mode, int entry) {
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) if (!solid[i][j]) openCells++;
   runAch.clear();
 
-  stamina = STAMINA_MAX;
+  stamina = STAMINA_MAX * pizzaMul();
   exhausted = false;
   msgUntil = 0;
   eyeH = EYE_H;
@@ -1735,8 +1764,9 @@ void placeDecals() {
   for (int tries = 0; tries < 6000 && placed < count; tries++) {
     int[] c = randomOpenCell();
     if (placed == 0 && tries < 1500 && (flow[c[0]][c[1]] < 1 || flow[c[0]][c[1]] > 3)) continue;
+    if (placed == 1 && tries < 3000 && (flow[c[0]][c[1]] < 2 || flow[c[0]][c[1]] > 6)) continue;
     int[] d = DIRS[(int) random(4)];
-    if (!isWall(c[0] + d[0], c[1] + d[1])) continue;
+    if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
     String face = c[0] + "," + c[1] + "," + d[0] + "," + d[1];
     if (used.contains(face)) continue;
     used.add(face);
@@ -1748,7 +1778,7 @@ void placeDecals() {
     dc.z = random(175, 245);
     dc.w = CELL * 0.9;
     dc.h = dc.w * 0.5;
-    dc.msg = placed % WALL_MSGS.length;
+    dc.msg = placed == 1 ? CABRAL_MSG : (placed == 0 ? 0 : placed - 1) % (WALL_MSGS.length - 1);
     dc.tex = graffiti[dc.msg];
     decals.add(dc);
     placed++;
@@ -1763,7 +1793,7 @@ void placeProps() {
     for (int tries = 0; tries < 200; tries++) {
       int[] c = randomOpenCell();
       int[] d = DIRS[(int) random(4)];
-      if (!isWall(c[0] + d[0], c[1] + d[1])) continue;
+      if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
       String face = (vent ? "v" : "o") + c[0] + "," + c[1] + "," + d[0] + "," + d[1];
       if (used.contains(face)) continue;
       used.add(face);
@@ -1868,7 +1898,7 @@ void placeCerts() {
       boolean relaxed = tries > 600;
       if (flow[c[0]][c[1]] < (relaxed ? 4 : 8)) continue;
       int[] d = DIRS[(int) random(4)];
-      if (!isWall(c[0] + d[0], c[1] + d[1])) continue;
+      if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
       float x = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 2.5);
       float y = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 2.5);
       boolean ok = true;
@@ -1959,7 +1989,7 @@ void addArrowsTo(int ti, int tj, int count) {
       }
     }
     ArrayList<int[]> walls = new ArrayList<int[]>();
-    for (int[] d : DIRS) if (isWall(i + d[0], j + d[1]) && d[0] * si + d[1] * sj == 0) walls.add(d);
+    for (int[] d : DIRS) if (wallFace(i + d[0], j + d[1]) && d[0] * si + d[1] * sj == 0) walls.add(d);
     if (walls.isEmpty()) continue;
     int[] d = walls.get((int) random(walls.size()));
     float cx = (i + 0.5) * CELL + d[0] * (CELL * 0.5 - 3);
@@ -2092,7 +2122,7 @@ void chooseExit() {
       if (solid[i][j]) continue;
       if (pass == 0 && flow[i][j] < maxD * 0.7) continue;
       for (int[] d : DIRS) {
-        if (!isWall(i + d[0], j + d[1])) continue;
+        if (!wallFace(i + d[0], j + d[1])) continue;
         boolean taken = false;
         for (Cert ct : certs) if (ct.i == i && ct.j == j && ct.di == d[0] && ct.dj == d[1]) taken = true;
         if (!taken) cand.add(new int[]{i, j, d[0], d[1]});
@@ -2868,7 +2898,7 @@ int tasersOnMap() {
 }
 
 float staminaMax() {
-  return STAMINA_MAX * (millis() < fedUntil ? 2 : 1);
+  return STAMINA_MAX * pizzaMul() * (millis() < fedUntil ? 2 : 1);
 }
 
 void startUse(int type) {
@@ -2921,7 +2951,7 @@ void applyBuff(int type) {
     break;
   case CESTA:
     fedUntil = now + BUFF_MS[CESTA];
-    stamina = STAMINA_MAX * 2;
+    stamina = STAMINA_MAX * 2 * pizzaMul();
     exhausted = false;
     showMsg("ABASTECIDO  —  FÔLEGO EM DOBRO");
     break;
@@ -3094,6 +3124,7 @@ void update(float dt) {
   }
 
   updateCans(dt);
+  updateSecrets(dt);
 
   // ---- pick up drops
   for (int k = drops.size() - 1; k >= 0; k--) {
@@ -3476,6 +3507,231 @@ void drawXray() {
   pgl.depthMask(true);
   endPGL();
   noTint();
+}
+
+// =====================================================================
+// THE BLESSING OF CABRAL: dark dead ends that open under the flashlight, and the Pizza do Papponi
+// one pizza per phase: POLIWEEK days 0-5, VS. 6, RECUPERAÇÃO, then ENDLESS
+int phase() {
+  return runDay >= 0 ? runDay : PHASES - 1;
+}
+
+float pizzaMul() {
+  int n = 0;
+  for (boolean b : pizzaGot) if (b) n++;
+  return 1 + PIZZA_BONUS * n;
+}
+
+// dark dead ends whose far wall opens: into a hidden nook if it's walled in on every other side,
+// otherwise into a secret shortcut to the corridor behind it (nooks are picked first)
+void placeSecrets() {
+  secrets.clear();
+  ArrayList<int[]> cand = new ArrayList<int[]>();
+  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
+    if (isWall(i, j) || flow[i][j] < 4) continue;
+    int open = 0, oi = 0, oj = 0;
+    for (int[] d : DIRS) {
+      if (isWall(i + d[0], j + d[1])) continue;
+      open++;
+      oi = d[0];
+      oj = d[1];
+    }
+    if (open != 1) continue;
+    int wi = i - oi, wj = j - oj;              // the wall facing you as you walk in
+    if (wi < 1 || wj < 1 || wi > GRID - 2 || wj > GRID - 2) continue;
+    int around = 0;
+    for (int[] d : DIRS) {
+      int ni = wi + d[0], nj = wj + d[1];
+      if ((ni != i || nj != j) && !isWall(ni, nj)) around++;
+    }
+    cand.add(new int[]{i, j, wi, wj, around + (flow[i][j] > SECRET_NEAR ? 10 : 0)});
+  }
+  java.util.Collections.shuffle(cand);
+  java.util.Collections.sort(cand, new java.util.Comparator<int[]>() {
+    public int compare(int[] a, int[] b) { return a[4] - b[4]; }
+  });
+  boolean pizzaLeft = !pizzaGot[phase()];
+  for (int[] c : cand) {
+    if (secrets.size() >= SECRETS) break;
+    boolean nextToOther = false;                // two nooks side by side would open into each other
+    for (Secret o : secrets) if (abs(o.wi - c[2]) + abs(o.wj - c[3]) <= 1) nextToOther = true;
+    if (nextToOther) continue;
+    Secret s = new Secret();
+    s.di = c[0];
+    s.dj = c[1];
+    s.wi = c[2];
+    s.wj = c[3];
+    s.pizza = pizzaLeft && secrets.isEmpty();
+    lampType[s.di][s.dj] = 2;                   // always a dark dead end
+    secrets.add(s);
+  }
+}
+
+// paint Cabral's sun on each secret wall, at eye height
+void markSecrets() {
+  for (Secret s : secrets) {
+    Decal dc = new Decal();
+    dc.nx = s.di - s.wi;
+    dc.ny = s.dj - s.wj;
+    dc.cx = (s.di + 0.5) * CELL - dc.nx * (CELL * 0.5 - 2);
+    dc.cy = (s.dj + 0.5) * CELL - dc.ny * (CELL * 0.5 - 2);
+    dc.z = 185;
+    dc.w = dc.h = 120;
+    dc.msg = -1;
+    dc.tex = cabralMark;
+    decals.add(dc);
+    s.mark = dc;
+  }
+}
+
+// a sun with a C in it, in the same dripping red paint as the graffiti
+PImage makeCabralMark() {
+  java.util.Random rng = new java.util.Random(77);
+  PGraphics g = createGraphics(256, 256);
+  g.beginDraw();
+  g.clear();
+  g.translate(128, 122);
+  g.noFill();
+  for (int pass = 0; pass < 2; pass++) {
+    g.stroke(pass == 0 ? color(120, 8, 6, 120) : color(150, 12, 10, 235));
+    g.strokeWeight(pass == 0 ? 16 : 9);
+    g.ellipse(0, 0, 120, 120);
+    for (int k = 0; k < 12; k++) {
+      float a = k * TWO_PI / 12 + 0.1, r0 = 76, r1 = k % 2 == 0 ? 112 : 98;
+      g.line(cos(a) * r0, sin(a) * r0, cos(a) * r1, sin(a) * r1);
+    }
+  }
+  g.noStroke();
+  g.fill(150, 12, 10, 235);
+  g.textFont(fontGraffiti);
+  g.textAlign(CENTER, CENTER);
+  g.textSize(84);
+  g.text("C", 0, 6);
+  for (int k = 0; k < 7; k++) {                // drips
+    float x = (rng.nextFloat() - 0.5) * 110, y = 20 + rng.nextFloat() * 40;
+    float len = 12 + rng.nextFloat() * 50;
+    g.stroke(140, 12, 10, 220);
+    g.strokeWeight(3 + rng.nextFloat() * 3);
+    g.line(x, y, x, y + len);
+  }
+  g.endDraw();
+  return g.get();
+}
+
+boolean secretWall(int i, int j) {
+  for (Secret s : secrets) if (!s.open && s.wi == i && s.wj == j) return true;
+  return false;
+}
+
+// a wall face things can hang on (not a secret one: it's going to open)
+boolean wallFace(int i, int j) {
+  return isWall(i, j) && !secretWall(i, j);
+}
+
+void updateSecrets(float dt) {
+  for (Secret s : secrets) {
+    float dcx = (s.di + 0.5) * CELL, dcy = (s.dj + 0.5) * CELL;
+    if (!s.open) {
+      // the far wall of the dead end, in your flashlight's beam, from close by
+      float wx = dcx + (s.wi - s.di) * CELL * 0.5, wy = dcy + (s.wj - s.dj) * CELL * 0.5;
+      float d = dist(player.x, player.y, wx, wy);
+      float aim = abs(angleDiff(yaw, atan2(wy - player.y, wx - player.x)));
+      boolean lit = flashlightOn && d < CELL * 2.2 && aim < radians(20) && abs(pitch) < 0.7
+        && lineOfSight(player.x, player.y, dcx, dcy);
+      s.light = lit ? s.light + dt : max(0, s.light - dt * 2);
+      if (lit) staticBurst = max(staticBurst, 0.15 * s.light / REVEAL_TIME);
+      if (s.light >= REVEAL_TIME) openSecret(s);
+    } else if (s.pizza && !s.eaten && dist(player.x, player.y, (s.wi + 0.5) * CELL, (s.wj + 0.5) * CELL) < 130) {
+      eatPizza(s);
+    }
+  }
+}
+
+void openSecret(Secret s) {
+  s.open = true;
+  decals.remove(s.mark);
+  solid[s.wi][s.wj] = false;
+  lampType[s.wi][s.wj] = 0;                     // the nook is lit: the blessing
+  level = buildLevel();
+  flowI = -1;
+  updateFlow();
+  staticBurst = max(staticBurst, 0.5);
+  achT = 0;                                     // the little chime
+  if (s.pizza) {
+    showMsg("A BÊNÇÃO DO CABRAL  —  UMA PASSAGEM SE ABRIU");
+  } else {
+    showMsg("UMA PASSAGEM SECRETA...");
+    drops.add(new Drop((s.wi + 0.5) * CELL, (s.wj + 0.5) * CELL, nextDropType()));
+  }
+}
+
+void eatPizza(Secret s) {
+  s.eaten = true;
+  pizzaGot[phase()] = true;
+  saveProgress();
+  stamina = staminaMax();
+  exhausted = false;
+  achT = 0;
+  stepEnv = 0.3;
+  showMsg("PIZZA DO PAPPONI  —  FÔLEGO MÁXIMO +" + round(PIZZA_BONUS * 100) + "% PARA SEMPRE");
+}
+
+void drawPizzas() {
+  float t = millis() / 1000.0;
+  noStroke();
+  for (Secret s : secrets) {
+    if (!s.open || !s.pizza || s.eaten) continue;
+    float x = (s.wi + 0.5) * CELL, y = (s.wj + 0.5) * CELL;
+    float dd = dist(player.x, player.y, x, y);
+    if (dd > CELL * 6) continue;
+    itemLights(x, y, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5));
+    emissive(45, 28, 8);                        // a warm, blessed glow
+    pushMatrix();
+    translate(x, y, 125 + sin(t * 2.2) * 10);
+    rotateZ(t * 1.1);
+    rotateX(-HALF_PI + 1.15);                   // nearly upright, so the toppings face you as it spins
+    scale(1.1);
+    shape(pizzaModel);
+    popMatrix();
+    emissive(0);
+    flush();
+  }
+  noLights();
+  lightFalloff(1, 0, 0);
+  specular(0);
+}
+
+// a textured OBJ as one triangle mesh (the Blender export flips handedness: mirror x back)
+PShape loadModel(String file, String texFile) {
+  ArrayList<PVector> vs = new ArrayList<PVector>(), vt = new ArrayList<PVector>(), vn = new ArrayList<PVector>();
+  PShape sh = createShape();
+  sh.beginShape(TRIANGLES);
+  sh.noStroke();
+  sh.texture(loadImage(texFile));
+  sh.fill(255);
+  sh.specular(40);
+  sh.shininess(12);
+  for (String ln : loadStrings(file)) {
+    String[] p = splitTokens(ln);
+    if (p.length == 0) continue;
+    if (p[0].equals("v")) vs.add(new PVector(-float(p[1]), float(p[2]), float(p[3])));
+    else if (p[0].equals("vt")) vt.add(new PVector(float(p[1]), 1 - float(p[2])));
+    else if (p[0].equals("vn")) vn.add(new PVector(-float(p[1]), float(p[2]), float(p[3])));
+    else if (p[0].equals("f")) {
+      for (int a = 3; a >= 1; a--) {
+        String[] ix = split(p[a], '/');
+        PVector v = vs.get(int(ix[0]) - 1);
+        if (ix.length > 2 && ix[2].length() > 0) {
+          PVector nn = vn.get(int(ix[2]) - 1);
+          sh.normal(nn.x, nn.y, nn.z);
+        }
+        PVector tc = (ix.length > 1 && ix[1].length() > 0) ? vt.get(int(ix[1]) - 1) : new PVector();
+        sh.vertex(v.x, v.y, v.z, tc.x, tc.y);
+      }
+    }
+  }
+  sh.endShape();
+  return sh;
 }
 
 // =====================================================================
@@ -4020,6 +4276,7 @@ void render() {
 
   drawDrops3D();
   drawCans3D();
+  drawPizzas();
   drawXray();
   drawViewModel3D();
 
@@ -4647,7 +4904,7 @@ void drawStamina() {
   int now = millis();
   boolean energized = now < energyUntil, fed = now < fedUntil;
   float smax = staminaMax();
-  int segs = fed ? 30 : 20;
+  int segs = round((fed ? 30 : 20) * pizzaMul());
   float sw = 15, gap = 3;
   float bw = segs * (sw + gap) - gap;
   float bx = width / 2 - bw / 2, by = height - 64;
@@ -5646,17 +5903,21 @@ void drawCatItems() {
 void drawCatStats() {
   String[] labels = {
     "Partidas", "Mortes", "Fugas pela SAÍDA", "Tempo total nos Backrooms", "Itens coletados", "Itens consumidos",
-    "Atordoamentos", "Perseguições escapadas", "Certificados coletados", "Horas acumuladas", "Dias vencidos", "Recorde ENDLESS"
+    "Atordoamentos", "Perseguições escapadas", "Certificados coletados", "Horas acumuladas", "Dias vencidos", "Recorde ENDLESS",
+    "Pizzas do Papponi"
   };
+  int pizzas = 0;
+  for (boolean b : pizzaGot) if (b) pizzas++;
   int days = 0;
   for (int d = 0; d <= FINAL_DAY; d++) if (dayBeaten[d]) days++;
   String[] values = {
     str(totalRuns), str(totalDeaths), str(totalWins), fmtTime(totalTime), str(totalItems), str(totalConsumed),
     str(totalStuns), str(totalEscapes), str(totalCerts), hoursValidated() + "h/36h", days + "/7",
-    endlessUnlocked ? nf(best, 0, 1) + "s" : "BLOQUEADO"
+    endlessUnlocked ? nf(best, 0, 1) + "s" : "BLOQUEADO",
+    pizzas + "/" + PHASES + (pizzas > 0 ? "   (+" + round(PIZZA_BONUS * 100 * pizzas) + "% FÔLEGO)" : "")
   };
   for (int k = 0; k < labels.length; k++) {
-    float x = 60 + (k % 2) * 630, y = 190 + (k / 2) * 100;
+    float x = 60 + (k % 2) * 630, y = 190 + (k / 2) * 92;
     hudSlab(x, y, 610, 84);
     fill(170, 20, 15);
     rect(x, y, 7, 84);
