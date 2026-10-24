@@ -1,0 +1,4 @@
+newmtl Material
+Kd 1.000 1.000 1.000
+Ns 20
+map_Kd item_salada.jpg

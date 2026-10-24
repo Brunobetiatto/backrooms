@@ -1,0 +1,4 @@
+newmtl taser
+Kd 1.000 1.000 1.000
+Ns 12
+map_Kd item_taser.jpg

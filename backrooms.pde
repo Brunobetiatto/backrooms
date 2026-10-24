@@ -117,8 +117,8 @@ final int     CONFUSE_MS   = 6000;
 
 // ---------------- monster + empty can ----------------
 final float XRAY_ALPHA  = 0.55;       // the nerdolas' ghost through the walls while PILHADO
-final float CAN_SCALE   = 0.4;        // the thrown can (the model is 100 tall)
-final float CAN_FLOOR   = 25 * CAN_SCALE;   // its radius: resting height when lying down
+final float CAN_SCALE   = 0.4;        // the thrown can (the crushed model is 54 tall)
+final float CAN_FLOOR   = 27 * CAN_SCALE;   // half its crushed height: resting height when it lands flat
 final float CAN_SPEED   = 1300;       // throw speed, units/s
 final float CAN_LOFT    = 250;        // a bit of upward toss
 final float GRAVITY     = 1320;
@@ -385,7 +385,6 @@ ArrayList<Cert> certs = new ArrayList<Cert>();
 ArrayList<Arrow> arrows = new ArrayList<Arrow>();
 PImage arrowTex;
 int nearCert = -1;
-float[][] coxBumps, saladBits;
 
 int[] inv = new int[ITEM_NAMES.length];
 int useType = -1, useStart;
@@ -2203,37 +2202,82 @@ PImage makeItem(int type) {
     coxinhaShape(g, 64, 60, 0.92);
 
   } else if (type == SALADA) {
-    g.fill(215, 215, 205, 235);
-    g.quad(28, 22, 100, 22, 90, 120, 38, 120);
-    int[] fruit = {color(160, 25, 25), color(95, 130, 35), color(205, 170, 60), color(80, 30, 80), color(195, 100, 25)};
-    g.strokeWeight(2);
-    for (int k = 0; k < 22; k++) {
-      float y = 40 + rng.nextFloat() * 72;
-      float halfW = lerp(34, 24, (y - 22) / 98.0) - 7;
-      float x = 64 + (rng.nextFloat() * 2 - 1) * halfW;
-      g.fill(fruit[k % fruit.length]);
-      g.rect(x - 6, y - 6, 12, 11);
+    g.fill(120, 92, 70);                             // the inside of the bowl, behind the heap
+    g.ellipse(64, 66, 108, 30);
+    g.strokeWeight(3);
+    int[][] heap = {{36, 48, 4}, {52, 40, 1}, {67, 36, 0}, {83, 42, 3}, {97, 50, 1},
+      {24, 58, 1}, {44, 52, 2}, {62, 50, 4}, {79, 54, 0}, {101, 60, 4},
+      {18, 66, 4}, {34, 64, 0}, {52, 64, 3}, {70, 63, 1}, {88, 65, 2}, {108, 66, 1}};
+    for (int[] f : heap) {
+      float x = f[0], y = f[1];
+      if (f[2] == 0) {                               // strawberry
+        g.fill(200, 30, 35);
+        g.ellipse(x, y, 20, 17);
+        g.noStroke();
+        g.fill(245, 215, 90);
+        for (int k = 0; k < 5; k++) g.rect(x - 6 + rng.nextFloat() * 11, y - 4 + rng.nextFloat() * 8, 2, 2);
+        g.fill(60, 140, 40);
+        g.triangle(x - 5, y - 9, x + 5, y - 9, x, y - 4);
+        g.stroke(12);
+      } else if (f[2] == 1) {                        // grape
+        g.fill(85, 30, 75);
+        g.ellipse(x, y, 14, 16);
+        g.noStroke();
+        g.fill(160, 110, 150);
+        g.ellipse(x - 2, y - 3, 4, 5);
+        g.stroke(12);
+      } else if (f[2] == 2) {                        // banana slice
+        g.fill(245, 232, 170);
+        g.ellipse(x, y, 18, 16);
+        g.noStroke();
+        g.fill(215, 190, 110);
+        g.ellipse(x, y, 6, 5);
+        g.stroke(12);
+      } else if (f[2] == 3) {                        // kiwi
+        g.fill(110, 160, 45);
+        g.ellipse(x, y, 19, 17);
+        g.noStroke();
+        g.fill(215, 230, 160);
+        g.ellipse(x, y, 7, 6);
+        g.fill(20);
+        for (int k = 0; k < 8; k++) g.rect(x + cos(k * 0.785) * 5.5 - 1, y + sin(k * 0.785) * 4.5 - 1, 2, 2);
+        g.stroke(12);
+      } else {                                       // mango / papaya cube
+        g.fill(240, 145, 35);
+        g.pushMatrix();
+        g.translate(x, y);
+        g.rotate(x * 0.07);
+        g.rect(-7, -7, 14, 14, 3);
+        g.popMatrix();
+      }
     }
-    g.noStroke();
-    g.fill(238, 228, 200);
+    g.strokeWeight(5);
+    g.fill(214, 196, 168);                           // the bowl, ridged like the model's
     g.beginShape();
-    g.vertex(34, 34); g.vertex(94, 34); g.vertex(88, 46); g.vertex(76, 41);
-    g.vertex(70, 56); g.vertex(62, 43); g.vertex(50, 50); g.vertex(44, 41);
+    g.vertex(10, 66);
+    g.bezierVertex(12, 102, 40, 114, 64, 114);
+    g.bezierVertex(88, 114, 116, 102, 118, 66);
+    g.bezierVertex(100, 76, 28, 76, 10, 66);
     g.endShape(CLOSE);
+    g.fill(190, 170, 140);
+    g.rect(46, 112, 36, 9, 3);
+    g.noFill();
+    g.strokeWeight(2);
+    g.stroke(160, 138, 110);
+    for (int k = 0; k < 3; k++) {
+      float y = 84 + k * 9, w = 50 - k * 7;
+      g.bezier(64 - w, y, 64 - w * 0.4, y + 7, 64 + w * 0.4, y + 7, 64 + w, y);
+    }
     g.stroke(12);
     g.strokeWeight(5);
     g.noFill();
-    g.quad(28, 22, 100, 22, 90, 120, 38, 120);
-    g.strokeWeight(7);
-    g.line(24, 22, 104, 22);
+    g.beginShape();
+    g.vertex(10, 66);
+    g.bezierVertex(12, 102, 40, 114, 64, 114);
+    g.bezierVertex(88, 114, 116, 102, 118, 66);
+    g.endShape();
     g.strokeWeight(4);
-    g.fill(175, 22, 18);
-    g.pushMatrix();
-    g.translate(94, 30);
-    g.rotate(0.55);
-    g.rect(-4, -34, 8, 40);
-    g.ellipse(0, -40, 18, 22);
-    g.popMatrix();
+    g.bezier(10, 66, 28, 76, 100, 76, 118, 66);
 
   } else if (type == LAGRIMAS) {
     g.fill(110, 130, 110, 210);
@@ -2256,7 +2300,7 @@ PImage makeItem(int type) {
     g.fill(25);
     g.textSize(13);
     g.textAlign(CENTER, CENTER);
-    g.text("A.C.", 0, -1);
+    g.text("LC", 0, -1);
     g.popMatrix();
     g.stroke(225, 230, 225);
     g.strokeWeight(3);
@@ -2326,27 +2370,14 @@ PImage makeItem(int type) {
     g.noFill();
     taserShape(g);
 
-  } else if (type == MONSTER || type == LATA) {
-    boolean empty = type == LATA;
+  } else if (type == MONSTER) {
     g.pushMatrix();
     g.translate(64, 68);
-    if (empty) g.rotate(-0.55);
     g.fill(234, 232, 224);
-    if (empty) {                                     // crushed in the middle
-      g.beginShape();
-      g.vertex(-25, -48); g.vertex(25, -48); g.vertex(19, -14); g.vertex(28, 4); g.vertex(18, 18);
-      g.vertex(25, 48); g.vertex(-25, 48); g.vertex(-17, 12); g.vertex(-28, -4); g.vertex(-19, -18);
-      g.endShape(CLOSE);
-    } else {
-      g.rect(-25, -48, 50, 96, 5);
-    }
+    g.rect(-25, -48, 50, 96, 5);
     g.fill(178, 181, 188);
     g.rect(-21, -57, 42, 10, 3);
     g.rect(-21, 46, 42, 8, 3);
-    if (empty) {
-      g.fill(20);
-      g.ellipse(4, -52, 14, 5);
-    }
     g.strokeWeight(3);
     g.fill(150, 152, 162);
     for (int k = -1; k <= 1; k++) {                  // the three claw marks
@@ -2357,12 +2388,54 @@ PImage makeItem(int type) {
       g.endShape(CLOSE);
     }
     g.line(-20, -36, 20, -36);
-    if (!empty) {
-      g.noStroke();
-      g.fill(150, 210, 255, 170);                    // cold sweat
-      for (int k = 0; k < 7; k++) g.ellipse(-20 + rng.nextFloat() * 40, -40 + rng.nextFloat() * 80, 3, 5);
-      g.stroke(12);
+    g.noStroke();
+    g.fill(150, 210, 255, 170);                      // cold sweat
+    for (int k = 0; k < 7; k++) g.ellipse(-20 + rng.nextFloat() * 40, -40 + rng.nextFloat() * 80, 3, 5);
+    g.stroke(12);
+    g.popMatrix();
+
+  } else if (type == LATA) {                         // stomped flat: the lid tilted on top of a crumpled body
+    g.fill(178, 181, 188);
+    g.ellipse(64, 104, 88, 20);
+    g.fill(234, 232, 224);
+    g.beginShape();
+    g.vertex(14, 62); g.vertex(26, 56); g.vertex(40, 63); g.vertex(56, 55); g.vertex(74, 62); g.vertex(92, 53);
+    g.vertex(112, 59); g.vertex(119, 75); g.vertex(110, 85); g.vertex(117, 96); g.vertex(98, 106); g.vertex(70, 109);
+    g.vertex(44, 106); g.vertex(22, 102); g.vertex(9, 90); g.vertex(17, 80);
+    g.endShape(CLOSE);
+    g.strokeWeight(3);
+    g.fill(150, 152, 162);
+    for (int k = -1; k <= 1; k++) {                  // the claw marks, squashed
+      float cx = 64 + k * 15;
+      g.beginShape();
+      g.vertex(cx - 6, 66); g.vertex(cx + 6, 66); g.vertex(cx + 2, 78); g.vertex(cx + 7, 86);
+      g.vertex(cx + 1, 100 - abs(k) * 4); g.vertex(cx - 2, 86); g.vertex(cx - 7, 78);
+      g.endShape(CLOSE);
     }
+    g.noFill();
+    g.stroke(120, 120, 128);
+    g.beginShape();                                  // the folds
+    g.vertex(17, 80); g.vertex(36, 74); g.vertex(54, 84); g.vertex(76, 76); g.vertex(96, 83); g.vertex(110, 85);
+    g.endShape();
+    g.beginShape();
+    g.vertex(22, 96); g.vertex(44, 90); g.vertex(66, 98); g.vertex(88, 91); g.vertex(106, 98);
+    g.endShape();
+    g.stroke(12);
+    g.strokeWeight(5);
+    g.pushMatrix();
+    g.translate(64, 48);
+    g.rotate(-0.12);
+    g.fill(178, 181, 188);
+    g.ellipse(0, 0, 94, 36);
+    g.strokeWeight(3);
+    g.fill(205, 207, 213);
+    g.ellipse(0, 1, 74, 26);
+    g.fill(20);
+    g.ellipse(-12, 0, 24, 9);
+    g.fill(190, 192, 198);                           // the pull tab
+    g.ellipse(9, -1, 26, 11);
+    g.fill(120);
+    g.ellipse(13, -1, 9, 5);
     g.popMatrix();
   }
   g.endDraw();
@@ -2406,17 +2479,95 @@ void roughen(PGraphics g, java.util.Random rng) {
 
 // =====================================================================
 // 3D ITEM MODELS
+PShape[] coxModels = new PShape[3];   // whole, one bite, bitten down to the filling
+float[] coxTop = {124, 107, 96};
+PShape saladaModel, lagrimasModel, cestaModel, taserModel, lataModel;
+PImage lagrimasLabel;
+
 void initModels() {
-  java.util.Random rng = new java.util.Random(42);
-  coxBumps = new float[70][];
-  for (int k = 0; k < coxBumps.length; k++)
-    coxBumps[k] = new float[]{0.06 + rng.nextFloat() * 0.84, rng.nextFloat() * TWO_PI, 1.4 + rng.nextFloat() * 1.8, rng.nextFloat()};
-  saladBits = new float[16][];
-  for (int k = 0; k < saladBits.length; k++)
-    saladBits[k] = new float[]{rng.nextFloat() * TWO_PI, k % 5, rng.nextFloat() * TWO_PI, 7 + rng.nextFloat() * 5,
-      0.15 + rng.nextFloat() * 0.75, rng.nextFloat()};
+  coxModels[0] = loadItem("item_coxinha.obj");
+  coxModels[1] = loadItem("item_coxinha_mordida.obj");
+  coxModels[2] = loadItem("item_coxinha_centro.obj");
+  saladaModel = loadItem("item_salada.obj");
+  lagrimasModel = loadItem("item_lagrimas.obj");
+  lagrimasModel.removeChild(lagrimasModel.getChildIndex(lagrimasModel.getChild("water_lable")));   // our own label goes on instead
+  lagrimasLabel = makeLagrimasLabel();
+  cestaModel = loadItem("item_cesta.obj");
+  taserModel = loadItem("item_taser.obj");
+  lataModel = loadItem("item_lata.obj");      // the empty Monster, stomped flat
 }
 
+// an OBJ already baked in game units (y down, base at y = 0): one triangle mesh per material of its .mtl.
+// A material with d < 1 is see-through plastic: named "glass" so drawItem draws it without writing depth
+PShape loadItem(String file) {
+  HashMap<String, String[]> mtl = new HashMap<String, String[]>();
+  String[] cur = null;
+  for (String ln : loadStrings(file.substring(0, file.length() - 4) + ".mtl")) {
+    String[] p = splitTokens(ln);
+    if (p.length == 0) continue;
+    if (p[0].equals("newmtl")) {
+      cur = new String[]{"1", "1", "1", "1", "10", null};    // Kd r g b, d, Ns, map_Kd
+      mtl.put(p[1], cur);
+    } else if (cur == null) continue;
+    else if (p[0].equals("Kd")) arrayCopy(p, 1, cur, 0, 3);
+    else if (p[0].equals("d")) cur[3] = p[1];
+    else if (p[0].equals("Ns")) cur[4] = p[1];
+    else if (p[0].equals("map_Kd")) cur[5] = p[1];
+  }
+  ArrayList<PVector> vs = new ArrayList<PVector>(), vt = new ArrayList<PVector>(), vn = new ArrayList<PVector>();
+  PShape grp = createShape(GROUP);
+  PShape sh = null;
+  for (String ln : loadStrings(file)) {
+    String[] p = splitTokens(ln);
+    if (p.length == 0) continue;
+    if (p[0].equals("v")) vs.add(new PVector(float(p[1]), float(p[2]), float(p[3])));
+    else if (p[0].equals("vt")) vt.add(new PVector(float(p[1]), 1 - float(p[2])));
+    else if (p[0].equals("vn")) vn.add(new PVector(-float(p[1]), -float(p[2]), -float(p[3])));   // P3D lights them from the other side
+    else if (p[0].equals("usemtl")) {
+      if (sh != null) {
+        sh.endShape();
+        grp.addChild(sh);
+      }
+      String[] m = mtl.get(p[1]);
+      sh = createShape();
+      sh.beginShape(TRIANGLES);
+      sh.noStroke();
+      float d = float(m[3]);
+      if (m[5] != null) sh.texture(loadImage(m[5]));
+      sh.setName(d < 1 ? "glass" : p[1]);
+      sh.fill(255 * float(m[0]), 255 * float(m[1]), 255 * float(m[2]), 255 * d);
+      sh.specular(constrain(float(m[4]) * 2, 0, 200));
+      sh.shininess(max(1, float(m[4]) / 4));
+    } else if (p[0].equals("f") && sh != null) {
+      for (int a = 1; a <= 3; a++) {
+        String[] ix = split(p[a], '/');
+        PVector v = vs.get(int(ix[0]) - 1);
+        PVector nn = vn.get(int(ix[2]) - 1);
+        sh.normal(nn.x, nn.y, nn.z);
+        if (ix[1].length() > 0) {
+          PVector t = vt.get(int(ix[1]) - 1);
+          sh.vertex(v.x, v.y, v.z, t.x, t.y);
+        } else {
+          sh.vertex(v.x, v.y, v.z);
+        }
+      }
+    }
+  }
+  if (sh != null) {
+    sh.endShape();
+    grp.addChild(sh);
+  }
+  return grp;
+}
+
+void drawItem(PShape grp) {
+  for (PShape ch : grp.getChildren()) {
+    boolean glass = "glass".equals(ch.getName());
+    if (glass) hint(DISABLE_DEPTH_MASK);
+    shape(ch);
+    if (glass) hint(ENABLE_DEPTH_MASK);
+  }
+}
 void lathe(float[] r, float[] h, int n, int segs, int cBot, int cTop, float grain) {
   float hMin = h[0], hMax = h[n - 1];
   float span = max(0.001, hMax - hMin);
@@ -2467,269 +2618,115 @@ void disc(float r, float h, int segs, int c) {
   endShape();
 }
 
-final float COX_TB = PI * 0.86;
-float coxR(float t) { return 66 * sin(t) * sq(sin(t / 2)); }
-float coxH(float t) { return 122 * (cos(t) - cos(COX_TB)) / (1 - cos(COX_TB)); }
-
+// each bite swaps to the next model, right after the chomp lands
 float modelCoxinha(float c) {
-  float[] rx = {-56, 0, 58, 62, 54, 0, -50, -60};
-  float[] rz = {-54, -62, -50, 0, 56, 60, 52, 0};
-  float[] ry = {-5, -1, -7, -2, -6, -1, -3, -2};
-  beginShape(TRIANGLES);
-  for (int k = 0; k < 8; k++) {
-    int k2 = (k + 1) % 8;
-    fill(k % 2 == 0 ? color(215, 206, 186) : color(200, 192, 172));
-    normal(0, -1, 0);
-    vertex(0, -1, 0);
-    vertex(rx[k], ry[k], rz[k]);
-    vertex(rx[k2], ry[k2], rz[k2]);
-  }
-  endShape();
-  disc(34, 1.5, 18, color(165, 130, 70, 160));
-  int n = 22;
-  float tTop = c * 1.7;
-  float[] r = new float[n], h = new float[n];
-  for (int k = 0; k < n; k++) {
-    float t = lerp(COX_TB, tTop, k / (float) (n - 1));
-    r[k] = coxR(t);
-    h[k] = coxH(t) + 2;
-  }
-  disc(r[0], 2, 22, color(175, 100, 30));
-  specular(90);
-  shininess(16);
-  lathe(r, h, n, 28, color(185, 108, 34), color(232, 160, 68), 0.18);
-  specular(0);
-  for (float[] b : coxBumps) {
-    float t = lerp(COX_TB - 0.05, 0.12, b[0]);
-    if (t < tTop + 0.04) continue;
-    float rr = coxR(t), hh = coxH(t) + 2;
-    pushMatrix();
-    translate(rr * cos(b[1]), -hh, rr * sin(b[1]));
-    fill(b[3] < 0.5 ? color(160, 90, 28) : color(238, 175, 85));
-    box(b[2] * 0.9);
-    popMatrix();
-  }
-  if (tTop > 0.02) {
-    float rc = coxR(tTop), hc = coxH(tTop) + 2;
-    disc(rc * 0.97, hc + 0.5, 24, color(236, 214, 165));
-    for (int k = 0; k < 8; k++) {
-      pushMatrix();
-      translate(cos(k * 1.7) * rc * 0.5, -hc - 2, sin(k * 1.7) * rc * 0.5);
-      fill(k % 3 == 0 ? color(245, 240, 225) : color(215, 140, 85));
-      sphere(k % 3 == 0 ? 5 : 3.5);
-      popMatrix();
-    }
-  }
-  return coxH(tTop) + 2;
+  int stage = min(2, floor(c * 3));
+  drawItem(coxModels[stage]);
+  return coxTop[stage];
 }
-
-float cupR(float h) { return 30 + 13 * h / 92.0; }
 
 float modelSalada(float c) {
-  float lvl = 74 - 38 * c;
-  float[] fr = {0, cupR(3) - 1.5, cupR(lvl) - 1.5, 0};
-  float[] fh = {3, 3, lvl, lvl};
-  lathe(fr, fh, 4, 22, color(185, 95, 40), color(220, 145, 65), 0.35);
-  int visible = round(saladBits.length * (1 - c));
-  int[] fc = {color(170, 30, 30), color(105, 140, 40), color(215, 180, 70), color(85, 35, 85), color(205, 110, 30)};
-  for (int k = 0; k < visible; k++) {
-    float[] b = saladBits[k];
-    boolean top = k < 10;
-    float bh = top ? lvl + 2 : b[4] * lvl;
-    float rad = top ? b[5] * (cupR(lvl) - 10) : cupR(bh) - 5;
-    pushMatrix();
-    translate(cos(b[0]) * rad, -bh, sin(b[0]) * rad);
-    fill(fc[(int) b[1]]);
-    if ((int) b[1] == 3) sphere(b[3] * 0.55);
-    else {
-      rotateY(b[2]);
-      rotateX(b[2] * 0.7);
-      box(b[3], b[3] * 0.75, b[3]);
-    }
-    popMatrix();
-  }
-  if (c < 0.9) disc(cupR(lvl) * 0.6, lvl + 2.5, 16, color(245, 236, 205));
-  pushMatrix();
-  translate(16, -lvl - 26, 6);
-  rotateZ(0.45);
-  fill(180, 25, 20);
-  specular(80);
-  box(6, 80, 2.5);
-  translate(0, 42, 0);
-  scale(1, 1.25, 0.3);
-  sphere(9);
-  specular(0);
-  popMatrix();
-  specular(120);
-  shininess(20);
-  float top = cupR(92);
-  lathe(new float[]{0, 30, 30.5, top}, new float[]{0, 0, 2, 92}, 4, 26, color(220, 228, 235, 80), color(238, 242, 246, 105), 0.3);
-  lathe(new float[]{top - 1, top + 2.5, top + 2.5, top - 1}, new float[]{90, 90, 94, 94}, 4, 26, color(235), color(245), 0.2);
-  specular(0);
-  return 94;
+  drawItem(saladaModel);
+  return 84;
 }
 
+// the tears glow inside the bottle and drain as you drink
 float modelLagrimas(float c) {
-  float lvl = 8 + 58 * (1 - c);
+  float lvl = 6 + 92 * (1 - c);
   emissive(10, 35, 95);
-  lathe(new float[]{0, 21, 21, 0}, new float[]{4, 4, lvl, lvl}, 4, 20, color(35, 95, 215), color(70, 145, 255), 0);
+  lathe(new float[]{0, 15.2, 15.2, 0}, new float[]{4, 4, lvl, lvl}, 4, 20, color(35, 95, 215), color(70, 145, 255), 0);
   emissive(0);
-  lathe(new float[]{0, 11, 11, 0}, new float[]{98, 98, 116, 116}, 4, 14, color(120, 85, 50), color(140, 100, 60), 0.4);
-  lathe(new float[]{0, 14, 15, 13, 0}, new float[]{110, 110, 117, 124, 126}, 5, 16, color(105, 10, 10), color(140, 20, 18), 0.3);
-  fill(120, 12, 12);
-  for (int k = 0; k < 3; k++) {
-    pushMatrix();
-    rotateY(k * 2.1);
-    translate(13.5, -104 + k * 2, 0);
-    box(3, 12 + k * 4, 3);
-    popMatrix();
+  specular(60);
+  shininess(10);
+  beginShape(QUAD_STRIP);                       // the label: a band around the bottle's waist
+  texture(lagrimasLabel);
+  fill(255);
+  for (int k = 0; k <= 40; k++) {
+    float a = TWO_PI * k / 40;
+    normal(cos(a), 0, sin(a));
+    vertex(17.1 * cos(a), -84, 17.1 * sin(a), 1 - k / 40.0, 0);
+    vertex(17.1 * cos(a), -52, 17.1 * sin(a), 1 - k / 40.0, 1);
   }
-  pushMatrix();
-  translate(0, -38, 26.5);
-  rotateZ(-0.06);
-  fill(212, 192, 140);
-  box(32, 24, 1);
-  fill(25);
-  translate(0, -5, 0.8);
-  box(22, 2, 0.5);
-  translate(-3, 6, 0);
-  box(16, 2, 0.5);
-  translate(5, 5, 0);
-  box(10, 2, 0.5);
-  popMatrix();
-  specular(160);
-  shininess(30);
-  lathe(new float[]{0, 24, 26, 26, 22, 12, 11, 13, 13}, new float[]{0, 0, 4, 66, 80, 90, 100, 104, 108}, 9, 24,
-    color(150, 170, 150, 85), color(190, 205, 190, 110), 0.45);
+  endShape();
   specular(0);
-  return 126;
+  drawItem(lagrimasModel);
+  return 128;
+}
+
+// "LC — Lágrimas do Cabral", twice around the bottle so it reads from any side
+PImage makeLagrimasLabel() {
+  PGraphics g = createGraphics(1024, 300);
+  g.beginDraw();
+  for (int y = 0; y < g.height; y++) {
+    g.stroke(lerpColor(color(165, 222, 248), color(55, 140, 210), y / (float) g.height));
+    g.line(0, y, g.width, y);
+  }
+  g.noStroke();
+  java.util.Random rng = new java.util.Random(11);
+  for (int k = 0; k < 40; k++) {                // tears running down
+    float x = rng.nextFloat() * g.width, y = rng.nextFloat() * g.height, r = 5 + rng.nextFloat() * 9;
+    g.fill(255, 90 + rng.nextFloat() * 80);
+    g.ellipse(x, y, r * 2, r * 2);
+    g.triangle(x - r * 0.85, y - r * 0.5, x + r * 0.85, y - r * 0.5, x, y - r * 2.6);
+  }
+  for (int p = 0; p < 2; p++) {
+    float x0 = p * 512;
+    g.fill(15, 45, 95);
+    g.ellipse(x0 + 105, 150, 170, 170);
+    g.noFill();
+    g.stroke(255);
+    g.strokeWeight(6);
+    g.ellipse(x0 + 105, 150, 146, 146);
+    g.noStroke();
+    g.fill(255);
+    g.textFont(fontBig);
+    g.textAlign(CENTER, CENTER);
+    g.textSize(86);
+    g.text("LC", x0 + 105, 140);
+    g.fill(15, 45, 95);
+    g.textAlign(LEFT, CENTER);
+    g.textSize(62);
+    g.text("LÁGRIMAS", x0 + 205, 108);
+    g.textSize(44);
+    g.text("DO CABRAL", x0 + 207, 172);
+    g.fill(255);
+    g.textSize(20);
+    g.text("100% CHORO MINERAL", x0 + 209, 222);
+  }
+  g.endDraw();
+  return g.get();
 }
 
 float modelCesta(float c) {
-  int left = 5 - min(5, floor(c * 5.5));
-  if (left > 0) {
-    pushMatrix();
-    translate(-20, -29, -10);
-    fill(238, 236, 228);
-    box(30, 52, 18);
-    fill(30, 70, 160);
-    translate(0, -6, 9.2);
-    box(30, 14, 0.6);
-    popMatrix();
-  }
-  if (left > 1) {
-    pushMatrix();
-    translate(14, -3, -14);
-    specular(120);
-    lathe(new float[]{0, 8, 8, 4, 4, 0}, new float[]{0, 0, 52, 60, 66, 66}, 6, 14, color(220, 170, 20), color(240, 200, 60), 0.2);
-    specular(0);
-    translate(0, -68, 0);
-    fill(170, 20, 15);
-    box(9, 6, 9);
-    popMatrix();
-  }
-  if (left > 2) {
-    pushMatrix();
-    translate(14, -19, 14);
-    fill(150, 110, 70);
-    box(24, 32, 12);
-    fill(170, 25, 20);
-    translate(0, -4, 6.2);
-    box(24, 8, 0.6);
-    popMatrix();
-  }
-  if (left > 3) {
-    pushMatrix();
-    translate(-18, -18, 16);
-    fill(120, 20, 15);
-    box(18, 30, 12);
-    popMatrix();
-  }
-  if (left > 4) {
-    pushMatrix();
-    translate(30, -20, 2);
-    fill(240);
-    box(16, 34, 14);
-    fill(200, 80, 110);
-    translate(0, 0, 7.2);
-    box(16, 8, 0.6);
-    popMatrix();
-  }
-  fill(168, 122, 72);
-  pushMatrix(); translate(0, -1.5, 0);  box(92, 3, 72);  popMatrix();
-  pushMatrix(); translate(0, -25, 36);  box(92, 50, 3);  popMatrix();
-  pushMatrix(); translate(0, -25, -36); box(92, 50, 3);  popMatrix();
-  pushMatrix(); translate(46, -25, 0);  box(3, 50, 72);  popMatrix();
-  pushMatrix(); translate(-46, -25, 0); box(3, 50, 72);  popMatrix();
-  fill(150, 105, 60);
-  pushMatrix(); translate(0, -50, 36);  rotateX(0.5);  translate(0, 0, 14);  box(90, 2, 28); popMatrix();
-  pushMatrix(); translate(0, -50, -36); rotateX(-0.5); translate(0, 0, -14); box(90, 2, 28); popMatrix();
-  pushMatrix(); translate(46, -50, 0);  rotateZ(-0.5); translate(14, 0, 0);  box(28, 2, 70); popMatrix();
-  pushMatrix(); translate(-46, -50, 0); rotateZ(0.5);  translate(-14, 0, 0); box(28, 2, 70); popMatrix();
-  fill(205, 185, 135, 220);
-  pushMatrix(); translate(0, -25, 37.8); box(16, 50, 0.6); popMatrix();
-  fill(150, 20, 15);
-  pushMatrix(); translate(-24, -30, 37.8); box(30, 14, 0.6); popMatrix();
-  return 60;
+  drawItem(cestaModel);
+  return 78;
 }
 
 void modelTaser(boolean firing) {
-  specular(50);
-  shininess(6);
-  fill(32);
-  pushMatrix(); translate(0, 0, -2);   box(26, 24, 74); popMatrix();
-  fill(22);
-  pushMatrix(); translate(0, -1, -46); box(31, 30, 20); popMatrix();
-  pushMatrix();
-  translate(0, 32, 24);
-  rotateX(-0.3);
-  fill(20);
-  box(20, 54, 24);
-  fill(45);
-  for (int k = 0; k < 5; k++) {
-    pushMatrix();
-    translate(0, -18 + k * 9, 12.5);
-    box(20, 3, 1.5);
-    popMatrix();
-  }
-  popMatrix();
-  fill(28);
-  pushMatrix(); translate(0, 20, -4); box(4, 16, 24); popMatrix();
-  fill(60);
-  pushMatrix(); translate(0, 18, 2);  box(3.5, 10, 4); popMatrix();
-  fill(230, 175, 20);
-  pushMatrix(); translate(13.6, 0, 6); box(1.2, 16, 40); translate(-27.2, 0, 0); box(1.2, 16, 40); popMatrix();
-  if (firing) emissive(60, 140, 255);
-  else emissive(20, 120, 20);
-  fill(firing ? color(140, 200, 255) : color(60, 220, 60));
-  pushMatrix(); translate(0, -13, 22); box(5, 2, 5); popMatrix();
-  emissive(0);
-  fill(190);
-  specular(220);
-  pushMatrix(); translate(8, -4, -60); box(3, 3, 12); translate(-16, 0, 0); box(3, 3, 12); popMatrix();
+  drawItem(taserModel);
   if (firing) {
     emissive(80, 160, 255);
     fill(170, 215, 255);
-    pushMatrix(); translate(0, -4, -66); sphere(7); popMatrix();
+    pushMatrix(); translate(0, 2, -68); sphere(7); popMatrix();
     for (int k = 0; k < 3; k++) {
       pushMatrix();
-      translate(random(-8, 8), -4 + random(-4, 4), -66 + random(-3, 3));
+      translate(random(-8, 8), 2 + random(-4, 4), -68 + random(-3, 3));
       box(2);
       popMatrix();
     }
     emissive(0);
   }
   specular(0);
-  tipSX = screenX(0, -4, -66);
-  tipSY = screenY(0, -4, -66);
+  tipSX = screenX(0, 2, -68);
+  tipSY = screenY(0, 2, -68);
 }
-
 float drawModel(int type, float c, boolean firing) {
   if (type == COXINHA) return modelCoxinha(c);
   if (type == SALADA) return modelSalada(c);
   if (type == LAGRIMAS) return modelLagrimas(c);
   if (type == CESTA) return modelCesta(c);
-  if (type == MONSTER || type == LATA) return modelCan();
+  if (type == MONSTER) return modelCan();
+  if (type == LATA) return modelLata();
   modelTaser(firing);
   return 30;
 }
@@ -2846,7 +2843,7 @@ void drawViewModel3D() {
     float k = firing ? 1 - (fireUntil - now) / 350.0 : 0;
     float recoil = firing ? sin(k * PI) : 0;
     pushMatrix();
-    translate(120 + bobX, 95 + bobY - recoil * 8, -230 + recoil * 25);
+    translate(120 + bobX, 55 + bobY - recoil * 8, -230 + recoil * 25);
     rotateY(0.3);
     rotateX(recoil * 0.35);
     modelTaser(firing);
@@ -3806,12 +3803,12 @@ void stepCan(Can c, float h) {
       c.vx *= 0.7;
       c.vy *= 0.7;
       c.tumbleV *= 0.6;
-    } else {                                  // sliding on the carpet, settling on its side
+    } else {                                  // sliding on the carpet, settling flat on its top or bottom
       c.vz = 0;
       float f = exp(-h * 4);
       c.vx *= f;
       c.vy *= f;
-      float lie = (floor(c.tumble / PI) + 0.5) * PI;
+      float lie = round(c.tumble / PI) * PI;
       c.tumble = lerp(c.tumble, lie, 1 - exp(-h * 12));
       c.tumbleV = 0;
       if (sqrt(c.vx * c.vx + c.vy * c.vy) < 12) c.rest = true;
@@ -3866,8 +3863,8 @@ void drawCans3D() {
     rotateZ(c.heading);
     rotateX(-HALF_PI + c.tumble);
     scale(CAN_SCALE);
-    translate(0, 50, 0);                      // the model stands on its base: spin around its middle
-    shape(canModel);
+    translate(0, 27, 0);                      // the model stands on its base: spin around its middle
+    drawItem(lataModel);
     popMatrix();
     flush();
   }
@@ -3880,6 +3877,11 @@ void drawCans3D() {
 float modelCan() {
   shape(canModel);
   return 100;
+}
+
+float modelLata() {
+  drawItem(lataModel);
+  return 54;
 }
 
 // the can as one triangle mesh per material (Processing's own OBJ loader makes a shape per triangle).

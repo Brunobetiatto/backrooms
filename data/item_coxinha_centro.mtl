@@ -1,0 +1,17 @@
+newmtl coxinha
+Kd 1.000 1.000 1.000
+Ns 30
+map_Kd item_coxinha.jpg
+
+newmtl frango
+Kd 1.000 1.000 1.000
+Ns 20
+map_Kd item_frango.jpg
+
+newmtl casca
+Kd 0.720 0.450 0.200
+Ns 10
+
+newmtl massa
+Kd 0.900 0.780 0.580
+Ns 10

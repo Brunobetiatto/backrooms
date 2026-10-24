@@ -1,0 +1,13 @@
+newmtl Material.003
+Kd 0.850 0.900 0.950
+Ns 80
+d 0.35
+
+newmtl water_lable
+Kd 1.000 1.000 1.000
+Ns 40
+map_Kd item_lagrimas.jpg
+
+newmtl Material.002
+Kd 0.160 0.590 0.720
+Ns 60

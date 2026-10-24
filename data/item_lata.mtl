@@ -1,0 +1,8 @@
+newmtl label
+Kd 1 1 1
+Ns 30
+map_Kd monster_label.jpg
+
+newmtl Can
+Kd 0.74 0.75 0.78
+Ns 60
