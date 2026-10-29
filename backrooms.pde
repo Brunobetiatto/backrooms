@@ -1,6 +1,7 @@
 // BACKROOMS: Escape from the Nerdolas — v1.1
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
+//   lino.jpg + lino.mp3: the secret Poolrooms (only the climax of lino.mp3 plays)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
 //   optional: data/flashlight.mp3
 // Save files: best.txt, best_fuga.txt, achievements.txt, progress.txt
@@ -58,6 +59,7 @@ final float PEEK_ROLL    = radians(45);   // head tilt at full lean (the view ro
 final int ENDLESS = 0, FUGA = 1;
 final int DAYS = 6, FINAL_DAY = 6;               // days 0..5 = one nerdola each, day 6 = VS. 6
 final int RECUP_DAY = 7;                         // RECUPERAÇÃO uses the next "day" slot
+final int POOL_DAY = 8;                          // the secret Poolrooms, through a disguised wall on Luca's day
 final int[] DAY_ORDER = {0, 4, 2, 1, 3, 5};      // Gabriel, Gaias, Gustavo, Vitor, Isa, Luca
 final int CERTS_PER_DAY  = 3;                    // 2 open the exit + 1 extra
 final int CERTS_TO_EXIT  = 2;
@@ -71,6 +73,7 @@ final float MULTI_SPEED   = 0.85;                // all-six modes: each one is a
 // ---------------- the nerdolas ----------------
 final String[] NAMES = {"Gabriel", "Vitor", "Gustavo", "Isa", "Gaias", "Luca"};
 final int T_GABRIEL = 0, T_VITOR = 1, T_GUSTAVO = 2, T_ISA = 3, T_GAIAS = 4, T_LUCA = 5;
+final int T_LINO = 6;                            // the Poolrooms' own: never in the roster, the menus or the catalogue
 final String[] NICKS = {"O ansioso", "O prodígio", "O fonoaudiólogo", "A stalker", "O teimoso", "O imprevisível"};
 final String[] TRAITS = {
   "18% mais rápido e dá botes mais fortes, mas te ouve menos.",
@@ -78,16 +81,16 @@ final String[] TRAITS = {
   "Ouve seus passos 70% mais longe, mas a voz dele é mais alta, então você também o ouve chegando.",
   "Silenciosa até estar a 3 salas de você, e não apaga as luzes. Você não recebe nenhum aviso.",
   "Enxerga 30% mais longe, o taser só o atordoa pela metade do tempo e ele procura por você o dobro do tempo.",
-  "A cada 14-24 s ele some e reaparece de 4 a 7 salas de você, sempre fora da sua linha de visão."
+  "A cada 14-24 s ele some e reaparece de 7 a 10 salas de você, nunca mais perto do que estava, sempre fora da sua linha de visão."
 };
-final float[] SPEED_MUL  = {1.18, 1, 1, 1, 1, 1};
-final float[] LUNGE_MUL  = {1.25, 1, 1, 1, 1, 1};
-final float[] HEAR_MUL   = {0.6, 1, 1.7, 1, 1, 1};
-final float[] SIGHT_MUL  = {1, 1, 1, 1, 1.3, 1};
-final float[] MEM_MUL    = {1, 2.5, 1, 1, 1, 1};
-final float[] SENSE_MUL  = {1, 0.5, 1, 1, 1, 1};
-final float[] STUN_MUL   = {1, 1, 1, 1, 0.5, 1};
-final float[] SEARCH_MUL = {1, 1, 1, 1, 2, 1};
+final float[] SPEED_MUL  = {1.18, 1, 1, 1, 1, 1, 1};
+final float[] LUNGE_MUL  = {1.25, 1, 1, 1, 1, 1, 1};
+final float[] HEAR_MUL   = {0.6, 1, 1.7, 1, 1, 1, 1};
+final float[] SIGHT_MUL  = {1, 1, 1, 1, 1.3, 1, 1};
+final float[] MEM_MUL    = {1, 2.5, 1, 1, 1, 1, 1};
+final float[] SENSE_MUL  = {1, 0.5, 1, 1, 1, 1, 1};
+final float[] STUN_MUL   = {1, 1, 1, 1, 0.5, 1, 1};
+final float[] SEARCH_MUL = {1, 1, 1, 1, 2, 1, 1};
 
 // ---------------- drops ----------------
 final int COXINHA = 0, SALADA = 1, LAGRIMAS = 2, CESTA = 3, TASER = 4, MONSTER = 5, LATA = 6;
@@ -132,6 +135,28 @@ final int   SECRET_NEAR = 14;         // prefer dead ends within this many rooms
 final float PIZZA_BONUS = 0.08;       // Pizza do Papponi: +8% max stamina each, forever
 final int   PHASES      = 9;          // POLIWEEK days 0-5, VS. 6, RECUPERAÇÃO, ENDLESS: one pizza each
 final float REVEAL_TIME = 1.0;        // seconds of flashlight on the wall to open it
+
+// ---------------- Luca ----------------
+final int   LUCA_NEAR   = 7, LUCA_FAR = 10;   // a teleport lands this many rooms from you, never closer than he was
+final int   LUCA_SEARCH = 5;          // ...then he searches this wide around you: he no longer knows exactly where you are
+
+// ---------------- the Poolrooms (secret) ----------------
+final String POOL_HINT     = "ONDE A PAREDE CHORA\nHA UM CAMINHO";   // Luca's day: the only clue
+final float  POOL_REACH    = 230;     // how close to the disguised wall you pour the Lágrimas instead of drinking them
+final float  POOL_DISSOLVE = 1.6;     // seconds for the wall to melt away
+final float  WATER_Z       = 70;      // the Poolrooms' water line: knee deep, everywhere
+final float  COLUMN_R      = 70;      // round tiled columns, on grid corners inside rooms
+final float  BALL_R        = 32;      // the balls floating around: walk into one to kick it
+final int    FACES         = 4;       // faces pressed into the tiles (scaled with map size)
+final float  LINO_SWIM     = 0.9;     // Lino's speed under the water (x the nerdolas' base speed)
+final float  LINO_SURFACE  = 6;       // rooms: this close, with a clear line to you, he rises out of the water
+final float  LINO_THROW_LO = 1.5, LINO_THROW_HI = 6;   // rooms: he throws water at you from this range
+final int    LINO_THROW_MS = 3800;    // between throws
+final int    LINO_WIND_MS  = 450;     // he stops to wind up, then throws
+final float  SPLASH_SPEED  = 1300;    // the jet of water, units/s
+final float  SPLASH_G      = 150;     // ...and its (gentle) drop
+final int    BLIND_MS      = 3000;    // water in your eyes
+final int    LINO_CALM_MS  = 10000;   // after losing you he sinks and backs off this long
 
 // ---------------- wall writings ----------------
 final String[] WALL_MSGS = {
@@ -230,8 +255,8 @@ final String[] MESES = {"JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", 
 final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "CATÁLOGO", "CONQUISTAS", "SAIR"};
 final String[] CAT_TABS = {"NERDOLAS", "PICHAÇÕES", "ITENS", "ESTATÍSTICAS"};
 
-PImage[] faces = new PImage[NAMES.length];
-AudioPlayer[] voices = new AudioPlayer[NAMES.length];
+PImage[] faces = new PImage[NAMES.length + 1];              // + Lino
+AudioPlayer[] voices = new AudioPlayer[NAMES.length + 1];
 
 // ---------------- progress (saved) ----------------
 boolean[] dayBeaten = new boolean[8];
@@ -255,6 +280,9 @@ Oscil boom, screech;
 Oscil drone1, drone2, kick;
 MoogFilter droneLP;
 Multiplier tickAmp;
+Multiplier waterAmp;                 // running water: the Poolrooms, or the wall that hides them
+Oscil drip;
+float dripT = -1, splashEnv;
 Oscil achOsc;
 float achT = -1;
 float stingT = -1;
@@ -268,7 +296,7 @@ PImage carpet, wall, roof, menuImg, panelTex, certTex, exitTex, staticImg, outle
 PImage[] itemTex = new PImage[ITEM_NAMES.length];
 PImage[] graffiti = new PImage[WALL_MSGS.length];
 PShape level;
-PShader world, post, lens;
+PShader world, post, lens, wet;
 GLWindow win;
 PFont fontBig, fontUI, fontMono, fontGraffiti, fontHud, fontMail;
 float exposureAdapt = 1, camGain = 0;
@@ -319,6 +347,51 @@ boolean[] pizzaGot = new boolean[PHASES];   // saved: which phases' pizza you've
 PShape pizzaModel;
 PImage cabralMark;
 
+// the Poolrooms door (Luca's day only): a dead end's far wall, damp and cracked, with pool tiles behind it.
+// Pour the Lágrimas do Cabral on it and it melts into the way through
+class PoolDoor {
+  int di, dj;          // the dead end
+  int wi, wj;          // the wall cell
+  float pourT = -1;    // seconds since the Lágrimas hit it (-1 = still dry)
+  boolean opened;
+}
+
+PoolDoor poolDoor;
+boolean poolRun, pouring;            // in the Poolrooms / pouring the Lágrimas instead of drinking them
+ArrayList<int[]> roomRects = new ArrayList<int[]>();
+ArrayList<PVector> columns = new ArrayList<PVector>();
+PShape waterMesh, columnMesh;
+PImage poolWallTex, poolFloorTex, poolCeilTex, poolBottomTex, poolDoorTex, poolVeilTex, poolHintTex, wakeTex;
+PImage[] tileFaces;
+float linoFade;                      // his music, 0..1
+int blindUntil;                      // Lino's water in your eyes
+
+// a ball floating in the Poolrooms
+class Ball {
+  float x, y, vx, vy, bob;
+  PShape model;
+  PMatrix3D spin = new PMatrix3D();
+}
+
+ArrayList<Ball> balls = new ArrayList<Ball>();
+PShape[] ballModels;
+
+// a jet of water Lino threw at you: an arc from his hands, its front a spray of drops
+class Splash {
+  float ox, oy, oz, ivx, ivy, ivz;     // where and how it left him
+  float x, y, z, vx, vy, vz, age;      // its front, now
+  float[][] drops = new float[70][];   // the spray: each drop's own drift (x, y, z), pace and size
+}
+
+ArrayList<Splash> splashes = new ArrayList<Splash>();
+
+// a drop thrown off when the water hits a wall or the surface
+class Drip {
+  float x, y, z, vx, vy, vz, life;
+}
+
+ArrayList<Drip> drips = new ArrayList<Drip>();
+
 class Particle {
   float x, y, vx, vy, life, sz;
   int col;
@@ -362,6 +435,9 @@ class Enemy {
   int goalI = -1, goalJ = -1;
   float sx, sy;
   float unseenFor;        // Luca: how long you haven't been looking at him
+  int calmUntil;          // Lino: backing off after losing you
+  float rise;             // Lino: 0 = under the water .. 1 = standing up out of it
+  int nextThrow, windUntil;   // Lino: his throws (windUntil 0 = not winding up)
   float lastVX, lastVY;   // your velocity at the moment it last detected you
   boolean inFront;
   float face = random(TWO_PI);   // where it's looking
@@ -513,6 +589,11 @@ String[] WORLD_FRAG = {
   "uniform float fogDist;",
   "uniform float volOn;",
   "uniform vec3 fogColor;",
+  "uniform vec3 lampTint;",
+  "uniform vec3 bounceTint;",
+  "uniform float pool;",
+  "uniform float water;",
+  "uniform float time;",
   "varying vec4 vertColor;",
   "varying vec4 vertTexCoord;",
   "varying vec3 wPos;",
@@ -544,6 +625,7 @@ String[] WORLD_FRAG = {
   "  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);",
   "}",
   "float fbm(vec2 p) { return (vnoise(p) * 0.5 + vnoise(p * 2.03) * 0.25 + vnoise(p * 4.01) * 0.125) / 0.875; }",
+  "float ripple(vec2 p) { return vnoise(p + vec2(time * 0.6, time * 0.4)) * 0.6 + vnoise(p * 2.3 - vec2(time * 0.5, -time * 0.7)) * 0.4; }",
   "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }",
   "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }",
 
@@ -586,7 +668,13 @@ String[] WORLD_FRAG = {
   "  float rough = 0.65;",
   "  float f0 = 0.04;",
   "  float bump = 0.0;",
-  "  if (isLevel) {",
+  "  if (isLevel && pool > 0.5) {",                                            // the Poolrooms: glazed tiles everywhere
+  "    albedo *= 0.94 + 0.12 * fbm(wPos.xy / 500.0 + wPos.z / 700.0);",
+  "    if (abs(gn.z) < 0.5) albedo *= 1.0 - 0.3 * smoothstep(" + (WATER_Z + 16) + ", " + WATER_Z + ", wPos.z);",   // the wet line
+  "    rough = 0.3;",
+  "    f0 = 0.045;",
+  "    bump = 0.8;",
+  "  } else if (isLevel) {",
   "    if (gn.z > 0.5) {",
   "      float wet = smoothstep(0.60, 0.72, fbm(wPos.xy / 260.0 + 3.7));",
   "      albedo *= (0.85 + 0.3 * fbm(wPos.xy / 700.0)) * mix(1.0, 0.65, wet);",
@@ -609,6 +697,16 @@ String[] WORLD_FRAG = {
   "    }",
   "  }",
 
+  "  vec3 wn = gn;",
+  "  if (water > 0.5) {",                       // shallow water: a see-through rippling sheet over the floor and the walls' feet
+  "    vec2 rp = wPos.xy / 70.0;",
+  "    float r0 = ripple(rp), rx = ripple(rp + vec2(0.15, 0.0)), ry = ripple(rp + vec2(0.0, 0.15));",
+  "    wn = normalize(vec3((r0 - rx) * 0.9, (r0 - ry) * 0.9, 1.0));",
+  "    albedo = vec3(0.2, 0.55, 0.62);",
+  "    rough = 0.22;",
+  "    f0 = 0.02;",
+  "    bump = 0.0;",
+  "  }",
   "  vec3 n = gn;",
   "  float bumpFade = 1.0 - smoothstep(350.0, 1100.0, dist);",
   "  if (bump > 0.0 && bumpFade > 0.0) {",
@@ -630,7 +728,8 @@ String[] WORLD_FRAG = {
   "    n = normalize(T * im * nts.x + B * im * nts.y + gn * nts.z);",
   "  }",
 
-  "  vec3 lampCol = vec3(1.0, 0.92, 0.72);",
+  "  if (water > 0.5) n = wn;",
+  "  vec3 lampCol = lampTint;",
   "  vec3 direct = vec3(0.0);",
   "  float irr = 0.0;",
   "  vec2 toCam = camPos.xy - wPos.xy;",
@@ -674,9 +773,10 @@ String[] WORLD_FRAG = {
   "    }",
   "  }",
 
-  "  vec3 bounceCol = vec3(0.95, 0.78, 0.52);",
+  "  vec3 bounceCol = bounceTint;",
   "  vec3 ambient = albedo * irr * bounceCol * (0.08 + 0.2 * max(-n.z, 0.0) + 0.06 * (1.0 - abs(n.z)));",
   "  ambient += albedo * vec3(0.006, 0.0055, 0.0045);",
+  "  if (water > 0.5) ambient += lampCol * irr * 0.3 * pow(1.0 - max(dot(n, Vn), 0.0), 3.0);",
 
   "  float ndv = max(dot(n, Vn), 0.0);",
   "  float eDist = length(ePos);",
@@ -737,7 +837,9 @@ String[] WORLD_FRAG = {
   "  }",
 
   "  col = aces(col * exposure);",
-  "  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);",
+  "  float alpha = 1.0;",
+  "  if (water > 0.5) alpha = clamp(0.35 + 0.55 * pow(1.0 - max(dot(n, Vn), 0.0), 3.0), 0.0, 0.9);",   // clearest looking straight down
+  "  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), alpha);",
   "}"
 };
 
@@ -797,6 +899,61 @@ String[] LENS_FRAG = {
   "}"
 };
 
+// Wet lens: Lino's water in your eyes. The usual "drops on glass" technique: each drop is a tiny lens that
+// bends (and flips) the view behind it, drops slide down leaving wet streaks, and the rest is blurred by
+// the film of water. amount fades it in and out
+String[] WET_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision mediump float;",
+  "#endif",
+  "uniform sampler2D texture;",
+  "uniform vec2 texOffset;",
+  "uniform float time;",
+  "uniform float amount;",
+  "uniform float aspect;",
+  "varying vec4 vertColor;",
+  "varying vec4 vertTexCoord;",
+  "float h21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }",
+  // one layer of drops: xy = how much it bends the view, z = how wet it is here
+  "vec3 layer(vec2 uv, float scale, float t) {",
+  "  vec2 st = uv * vec2(aspect, 1.0) * scale;",
+  "  st.y += t * (0.2 + 0.3 * h21(vec2(floor(st.x), 1.7)));",                 // each column slides at its own pace
+  "  vec2 id = floor(st);",
+  "  float n = h21(id);",
+  "  vec2 f = fract(st) - 0.5;",
+  "  vec2 c = vec2((n - 0.5) * 0.5, (fract(n * 7.31) - 0.5) * 0.5);",
+  "  float r = 0.24 + 0.18 * fract(n * 13.7);",
+  "  vec2 d = (f - c) * vec2(1.0, 0.8);",
+  "  float m = smoothstep(r, r * 0.75, length(d));",
+  "  float trail = smoothstep(0.05, 0.0, abs(f.x - c.x)) * smoothstep(c.y + 0.45, c.y, f.y) * step(c.y, f.y) * 0.5;",
+  "  return vec3(d / r * m, max(m, trail));",
+  "}",
+  "void main() {",
+  "  vec2 uv = vertTexCoord.st;",
+  "  vec3 a = layer(uv, 3.0, time);",
+  "  vec3 b = layer(uv + 0.37, 5.5, time * 1.3);",
+  "  vec3 c = layer(uv + 0.71, 11.0, time * 0.7);",                               // a mist of tiny ones
+  "  float m = max(max(a.z, b.z * 0.85), c.z * 0.6);",
+  "  vec2 off = (a.xy + b.xy * 0.7 + c.xy * 0.4) * 0.09;",
+  "  vec2 bent = uv - off * vec2(1.0, aspect);",
+  "  vec3 blur = vec3(0.0), drop = vec3(0.0);",
+  "  for (int k = 0; k < 24; k++) {",
+  "    float an = float(k) * 2.39996;",
+  "    vec2 o = vec2(cos(an), sin(an)) * (2.0 + float(k) * 1.6) * texOffset;",
+  "    blur += texture2D(texture, uv + o * 9.0 * amount).rgb;",                   // the water film: heavily blurred
+  "    if (k < 8) drop += texture2D(texture, bent + o * 2.0).rgb;",                // the drops: bent, a little soft
+  "  }",
+  "  blur /= 24.0;",
+  "  drop /= 8.0;",
+  "  vec3 col = mix(blur, drop, m * 0.8);",
+  "  float l = dot(col, vec3(0.299, 0.587, 0.114));",
+  "  col = mix(col, vec3(l) * vec3(0.8, 0.93, 1.0) + vec3(0.18, 0.24, 0.27), 0.55);",   // washed out, cold
+  "  col += smoothstep(0.6, 1.0, -(a.x + a.y) * a.z) * 0.35;",                    // light caught on each drop's edge
+  "  gl_FragColor = vec4(mix(texture2D(texture, uv).rgb, col, amount), 1.0);",
+  "}"
+};
+
 // Post: the camcorder (whole image, on-screen text included)
 String[] POST_FRAG = {
   "#define PROCESSING_TEXTURE_SHADER",
@@ -812,6 +969,7 @@ String[] POST_FRAG = {
   "uniform float vhs;",
   "uniform float fisheye;",
   "uniform float aspect;",
+  "uniform vec3 tone;",
   "varying vec4 vertColor;",
   "varying vec4 vertTexCoord;",
   "float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }",
@@ -846,7 +1004,7 @@ String[] POST_FRAG = {
   "  col += bloom * vec3(1.0, 0.92, 0.8) * 0.35 + bloom * vec3(0.2, 0.03, 0.0) * 0.25;",
   "  float luma = dot(col, vec3(0.299, 0.587, 0.114));",
   "  col = mix(vec3(luma), col, 0.92 - 0.4 * danger);",
-  "  col *= vec3(1.02, 1.0, 0.92);",
+  "  col *= tone;",
   "  col = mix(col, vec3(luma * 1.2, luma * 0.35, luma * 0.3), 0.35 * hit + 0.15 * danger * danger);",
   "  col = clamp(col, 0.0, 1.0);",
   "  col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);",
@@ -882,6 +1040,8 @@ void setup() {
     faces[k]  = loadImage(n + ".jpg");
     voices[k] = minim.loadFile(n + ".mp3");
   }
+  faces[T_LINO] = loadImage("lino.jpg");
+  voices[T_LINO] = minim.loadFile("lino.mp3");
   setupSynth();
 
   if (new File(dataPath("flashlight.mp3")).exists()) {
@@ -905,6 +1065,7 @@ void setup() {
   world = new PShader(this, WORLD_VERT, WORLD_FRAG);
   post  = new PShader(this, POST_VERT, POST_FRAG);
   lens  = new PShader(this, POST_VERT, LENS_FRAG);
+  wet   = new PShader(this, POST_VERT, WET_FRAG);
 
   panelTex  = makePanel();
   outletTex = makeOutlet();
@@ -917,6 +1078,21 @@ void setup() {
   for (int k = 0; k < WALL_MSGS.length; k++) graffiti[k] = makeGraffiti(WALL_MSGS[k], 100 + k);
   certTex = makeCert();
   cabralMark = makeCabralMark();
+  poolWallTex = makeTiles(16, color(188, 202, 204), color(120, 140, 146), 21);
+  poolFloorTex = makeTiles(16, color(180, 198, 202), color(112, 134, 140), 22);
+  poolCeilTex = makeTiles(8, color(170, 180, 182), color(120, 130, 134), 23);
+  poolBottomTex = makeTiles(16, color(130, 190, 204), color(70, 128, 146), 24);
+  poolDoorTex = makePoolDoor();
+  poolVeilTex = makePoolVeil();
+  poolHintTex = makeGraffiti(POOL_HINT, 300);
+  wakeTex = makeWake();
+  tileFaces = new PImage[faces.length];
+  for (int k = 0; k < faces.length; k++) tileFaces[k] = makeTileFace(faces[k]);
+  ballModels = new PShape[]{
+    makeBall(new int[]{color(220, 40, 35), color(245), color(250, 210, 40), color(40, 110, 220), color(245), color(60, 170, 70)}),
+    makeBall(new int[]{color(235, 215, 40)}),
+    makeBall(new int[]{color(70, 190, 80)})
+  };
   exitTex = makeExit();
   arrowTex = makeArrow();
   pucprBg = loadPucpr();
@@ -999,6 +1175,11 @@ void setupSynth() {
 
   achOsc = new Oscil(784, 0, Waves.TRIANGLE);
   achOsc.patch(out);
+
+  waterAmp = new Multiplier(0);
+  new Noise(1, Noise.Tint.PINK).patch(new MoogFilter(1100, 0.55)).patch(waterAmp).patch(out);
+  drip = new Oscil(1400, 0, Waves.SINE);
+  drip.patch(out);
 }
 
 void updateSynth(float dt, float dg) {
@@ -1061,6 +1242,21 @@ void updateSynth(float dt, float dg) {
   drone1.setAmplitude(0.06 * chaseLvl);
   drone2.setAmplitude(0.06 * chaseLvl);
   droneLP.frequency.setLastValue(180 + 900 * chaseLvl * (0.5 + 0.5 * sin(millis() * 0.001 * bpm / 60.0 * PI)));
+
+  // water: a steady trickle and the odd drip, all over the Poolrooms or faintly at the disguised wall
+  float wet = poolRun ? 1 : doorWet();
+  splashEnv *= exp(-dt * 7);
+  waterAmp.setValue(0.025 * wet + 0.1 * splashEnv);
+  if (dripT < 0 && random(1) < dt * 0.7 * wet) dripT = 0;
+  if (dripT >= 0) {
+    dripT += dt;
+    drip.setFrequency(1700 - 900 * min(1, dripT / 0.06));
+    drip.setAmplitude(0.06 * wet * exp(-dripT * 28));
+    if (dripT > 0.3) {
+      dripT = -1;
+      drip.setAmplitude(0);
+    }
+  }
 }
 
 void tickUiAudio(float dt) {
@@ -1106,6 +1302,10 @@ void silenceSynth() {
   kick.setAmplitude(0);
   tickAmp.setValue(0);
   chaseLvl = kickEnv = tickEnv = 0;
+  waterAmp.setValue(0);
+  drip.setAmplitude(0);
+  dripT = -1;
+  splashEnv = 0;
 }
 
 void pauseVoices() {
@@ -1270,27 +1470,29 @@ void startRun(int mode, int entry) {
   gameMode = mode;
   runEntry = entry;
   runDay = mode == FUGA ? entry : -1;
-  boolean allSix = mode == FUGA ? runDay >= FINAL_DAY : entry >= 6;
+  poolRun = mode == FUGA && runDay == POOL_DAY;
+  boolean allSix = mode == FUGA ? runDay == FINAL_DAY || runDay == RECUP_DAY : entry >= 6;
   boolean blackout = mode == FUGA && runDay == RECUP_DAY;
-  int[] roster = allSix ? new int[]{0, 1, 2, 3, 4, 5} : new int[]{mode == FUGA ? DAY_ORDER[runDay] : entry};
+  int[] roster = allSix ? new int[]{0, 1, 2, 3, 4, 5} : new int[]{poolRun ? T_LINO : (mode == FUGA ? DAY_ORDER[runDay] : entry)};
   GRID = mode == ENDLESS ? GRID_ENDLESS : (allSix ? GRID_FINAL : GRID_DAY);
   graceTime = GRACE_TIME + (roster.length > 1 ? 2 : 0);
 
   generateMaze();
+  placeColumns();
   level = buildLevel();
 
   lampType = new int[GRID][GRID];
   lampP = new float[GRID][GRID];
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
     float r = random(1);
-    lampType[i][j] = blackout ? 2 : (r < 0.08 ? 2 : (r < 0.18 ? 1 : 0));
+    lampType[i][j] = blackout ? 2 : (r < (poolRun ? 0.03 : 0.08) ? 2 : (r < (poolRun ? 0.1 : 0.18) ? 1 : 0));
   }
-  // dead ends: most have a dead lamp, so there are dark corners to hide in
+  // dead ends: most have a dead lamp, so there are dark corners to hide in (the Poolrooms stay bright)
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
     if (isWall(i, j)) continue;
     int open = 0;
     for (int[] d : DIRS) if (!isWall(i + d[0], j + d[1])) open++;
-    if (open == 1 && random(1) < DEADEND_DARK) lampType[i][j] = 2;
+    if (open == 1 && random(1) < (poolRun ? 0.25 : DEADEND_DARK)) lampType[i][j] = 2;
   }
 
   int[] c = randomOpenCell();
@@ -1317,9 +1519,13 @@ void startRun(int mode, int entry) {
   parts.clear();
   int nDrops = round(DROPS * mapScale());
   for (int k = 0; k < nDrops; k++) spawnDrop();
+  placeBalls();
   placeSecrets();
+  placePoolDoor();
   placeDecals();
+  placePoolHint();
   placeProps();
+  placeFaces();
   markSecrets();
   certs.clear();
   certsTaken = 0;
@@ -1376,11 +1582,17 @@ void startRun(int mode, int entry) {
   flicker = 1;
   flickerUntil = 0;
   crouchToggle = false;
+  pouring = false;
+  linoFade = 0;
+  blindUntil = 0;
+  splashes.clear();
+  drips.clear();
   releaseKeys();
   silenceSynth();
 
   pauseVoices();
   for (Enemy e : enemies) {
+    if (e.ch == T_LINO) continue;               // Lino is silent until he shows himself
     voices[e.ch].rewind();
     voices[e.ch].loop();
   }
@@ -1456,6 +1668,12 @@ void escapeWin() {
   lockMouse(false);
   silenceSynth();
   pauseVoices();
+  if (poolRun) {                                // the secret level: no days, hours or achievements on the line
+    emailPending = false;
+    totalWins++;
+    endRun(false);
+    return;
+  }
   unlock(15);
   if (survived < 180) unlock(16);
   if (!everSpotted) unlock(17);
@@ -1534,11 +1752,35 @@ void generateMaze() {
     if (h ^ v) solid[i][j] = false;
   }
 
-  int rooms = round(5 * mapScale());
+  roomRects.clear();
+  int rooms = round((poolRun ? 6 : 5) * mapScale());
   for (int r = 0; r < rooms; r++) {
-    int w = (int) random(3, 6), h = (int) random(3, 6);
+    int w = (int) (poolRun ? random(3, 7) : random(3, 6)), h = (int) (poolRun ? random(3, 7) : random(3, 6));
     int i0 = (int) random(1, GRID - 1 - w), j0 = (int) random(1, GRID - 1 - h);
     for (int i = i0; i < i0 + w; i++) for (int j = j0; j < j0 + h; j++) solid[i][j] = false;
+    roomRects.add(new int[]{i0, j0, w, h});
+  }
+}
+
+// a few round columns, on grid corners inside rooms with all four cells around them open
+// (the nerdolas walk cell to cell through the middles, so they never run into one)
+void placeColumns() {
+  columns.clear();
+  if (!poolRun) return;
+  ArrayList<PVector> cand = new ArrayList<PVector>();
+  for (int[] r : roomRects) {
+    for (int i = r[0] + 1; i < r[0] + r[2]; i++) for (int j = r[1] + 1; j < r[1] + r[3]; j++) {
+      if (isWall(i, j) || isWall(i - 1, j) || isWall(i, j - 1) || isWall(i - 1, j - 1)) continue;
+      cand.add(new PVector(i * CELL, j * CELL));
+    }
+  }
+  java.util.Collections.shuffle(cand);
+  int n = round(8 * mapScale());
+  for (PVector c : cand) {
+    if (columns.size() >= n) break;
+    boolean near = false;
+    for (PVector o : columns) if (dist(o.x, o.y, c.x, c.y) < CELL * 1.5) near = true;
+    if (!near) columns.add(c);
   }
 }
 
@@ -1558,7 +1800,8 @@ boolean isWall(int i, int j) {
 // =====================================================================
 // LEVEL MESH
 PShape buildLevel() {
-  PShape floorS = startMesh(carpet), ceilS = startMesh(roof), wallS = startMesh(wall);
+  PShape floorS = startMesh(poolRun ? poolBottomTex : carpet), ceilS = startMesh(poolRun ? poolCeilTex : roof);
+  PShape wallS = startMesh(poolRun ? poolWallTex : wall);
   float vRep = WALL_H / CELL;
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
     if (solid[i][j]) continue;
@@ -1578,7 +1821,43 @@ PShape buildLevel() {
   grp.addChild(floorS);
   grp.addChild(ceilS);
   grp.addChild(wallS);
+  if (poolRun) {
+    waterMesh = buildWater();
+    columnMesh = buildColumns();
+  }
   return grp;
+}
+
+// the water line, over every open cell
+PShape buildWater() {
+  PShape s = startMesh(poolFloorTex);
+  for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
+    if (solid[i][j]) continue;
+    s.vertex(i * CELL, j * CELL, WATER_Z, i, j);
+    s.vertex((i + 1) * CELL, j * CELL, WATER_Z, i + 1, j);
+    s.vertex((i + 1) * CELL, (j + 1) * CELL, WATER_Z, i + 1, j + 1);
+    s.vertex(i * CELL, (j + 1) * CELL, WATER_Z, i, j + 1);
+  }
+  s.endShape();
+  return s;
+}
+
+PShape buildColumns() {
+  PShape s = startMesh(poolWallTex);
+  int segs = 28;
+  float v = WALL_H / CELL;
+  for (PVector c : columns) {
+    for (int k = 0; k < segs; k++) {
+      float a0 = TWO_PI * k / segs, a1 = TWO_PI * (k + 1) / segs;
+      float u0 = a0 * COLUMN_R / CELL, u1 = a1 * COLUMN_R / CELL;   // same tile size as the walls
+      s.vertex(c.x + cos(a0) * COLUMN_R, c.y + sin(a0) * COLUMN_R, WALL_H, u0, 0);
+      s.vertex(c.x + cos(a1) * COLUMN_R, c.y + sin(a1) * COLUMN_R, WALL_H, u1, 0);
+      s.vertex(c.x + cos(a1) * COLUMN_R, c.y + sin(a1) * COLUMN_R, 0, u1, v);
+      s.vertex(c.x + cos(a0) * COLUMN_R, c.y + sin(a0) * COLUMN_R, 0, u0, v);
+    }
+  }
+  s.endShape();
+  return s;
 }
 
 PShape startMesh(PImage tex) {
@@ -1757,6 +2036,7 @@ PImage makeGraffiti(String text, int seed) {
 
 void placeDecals() {
   decals.clear();
+  if (poolRun) return;                          // nobody has written on these tiles
   ArrayList<String> used = new ArrayList<String>();
   int placed = 0;
   int count = round(DECALS * mapScale());
@@ -1786,7 +2066,7 @@ void placeDecals() {
 
 void placeProps() {
   ArrayList<String> used = new ArrayList<String>();
-  int nOut = round(OUTLETS * mapScale()), nVent = round(VENTS * mapScale());
+  int nOut = poolRun ? 0 : round(OUTLETS * mapScale()), nVent = round(VENTS * mapScale());
   for (int k = 0; k < nOut + nVent; k++) {
     boolean vent = k >= nOut;
     for (int tries = 0; tries < 200; tries++) {
@@ -2752,7 +3032,7 @@ void drawDrops3D() {
       float sa = 55 * sq(vis) * (1 - dd / (CELL * 4)) * (1 - 0.35 * up01) * appear;
       float sr = (dr.type == CESTA ? 70 : 55) * (1 - 0.15 * up01);
       pushMatrix();
-      translate(dr.x, dr.y, 2.5);
+      translate(dr.x, dr.y, 2.5 + (poolRun ? WATER_Z : 0));
       for (int k = 0; k < 3; k++) {
         fill(0, sa / 3);
         ellipse(0, 0, sr * (1 - k * 0.25), sr * (1 - k * 0.25));
@@ -2763,7 +3043,7 @@ void drawDrops3D() {
     itemLights(dr.x, dr.y, lerp(1, vis, 0.5));
 
     pushMatrix();
-    translate(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0));
+    translate(dr.x, dr.y, hover + (poolRun ? WATER_Z : 0) + (dr.type == TASER ? 60 * sc : 0));
     rotateZ(t * 1.3 + ph);
     rotateX(-HALF_PI);
     rotateZ(sin(t * 1.7 + ph) * 0.12);
@@ -2785,9 +3065,11 @@ void itemLights(float x, float y, float L) {
   float amb = (0.3 + 0.5 * lp) * L;
   noLights();
   lightFalloff(1, 0, 0);
-  ambientLight(70 * amb, 62 * amb, 48 * amb);
+  if (poolRun) ambientLight(50 * amb, 62 * amb, 72 * amb);
+  else ambientLight(70 * amb, 62 * amb, 48 * amb);
   lightFalloff(1, 0, 0.000004);
-  pointLight(255 * lp * L, 235 * lp * L, 185 * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 25);
+  float lr = poolRun ? 200 : 255, lg = poolRun ? 230 : 235, lb = poolRun ? 255 : 185;
+  pointLight(lr * lp * L, lg * lp * L, lb * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 25);
   lightFalloff(1, 0, 0);
   if (flashlightOn) spotLight(210 * flicker * L, 220 * flicker * L, 235 * flicker * L,
     camX, camY, camZ, camDX, camDY, camDZ, radians(30), 2);
@@ -2805,9 +3087,11 @@ void drawViewModel3D() {
   camera(0, 0, 0, 0, 0, -1, 0, 1, 0);
 
   float lvl = constrain(localLight + (flashlightOn ? 0.35 * flicker : 0), 0.12, 1.3);
-  ambientLight(60 * lvl, 54 * lvl, 42 * lvl);
+  if (poolRun) ambientLight(44 * lvl, 54 * lvl, 62 * lvl);
+  else ambientLight(60 * lvl, 54 * lvl, 42 * lvl);
   lightSpecular(140 * lvl, 130 * lvl, 110 * lvl);
-  directionalLight(255 * lvl, 236 * lvl, 190 * lvl, -0.25, 0.75, -0.6);
+  if (poolRun) directionalLight(200 * lvl, 230 * lvl, 255 * lvl, -0.25, 0.75, -0.6);
+  else directionalLight(255 * lvl, 236 * lvl, 190 * lvl, -0.25, 0.75, -0.6);
   lightSpecular(0, 0, 0);
   directionalLight(40, 45, 60, 0.6, -0.3, -0.4);
   noStroke();
@@ -2824,9 +3108,15 @@ void drawViewModel3D() {
     pushMatrix();
     if (useType == LAGRIMAS || useType == MONSTER) {
       float tilt = up * (0.25 + 1.25 * min(1, c * 2));
-      translate(30 + bobX, lerp(240, 40, up) + bobY - 25 * tilt, -210 + 40 * tilt);
-      rotateZ(-0.25 * up);
-      rotateX(-tilt);
+      if (pouring) {                            // held out at arm's length, tipped forward onto the wall
+        translate(40 + bobX, lerp(240, 70, up) + bobY, -260 - 30 * up);
+        rotateZ(-0.25 * up);
+        rotateX(tilt * 1.1);
+      } else {
+        translate(30 + bobX, lerp(240, 40, up) + bobY - 25 * tilt, -210 + 40 * tilt);
+        rotateZ(-0.25 * up);
+        rotateX(-tilt);
+      }
       if (useType == MONSTER) rotateY(PI - 0.3);   // the logo toward you
       topH = useType == MONSTER ? modelCan() : modelLagrimas(c);
     } else {
@@ -2904,6 +3194,7 @@ void startUse(int type) {
   useType = type;
   useStart = millis();
   chewTimer = 0;
+  pouring = type == LAGRIMAS && nearPoolDoor();
 }
 
 // every chaser loses you on the spot and goes to search where you vanished
@@ -3000,7 +3291,7 @@ void stunEnemy(Enemy e, float d) {
   e.sees = false;
   e.lostTimer = e.searchTimer = e.senseTimer = e.chaseTime = 0;
   pickWanderFar(e);
-  showMsg("ATORDOADO  —  " + NAMES[e.ch].toUpperCase() + " TE PERDEU");
+  showMsg("ATORDOADO  —  " + charName(e.ch).toUpperCase() + " TE PERDEU");
 }
 
 // =====================================================================
@@ -3066,6 +3357,7 @@ void update(float dt) {
     if (st != lastStep) {
       lastStep = st;
       stepEnv = crouching ? 0.08 : (sprinting ? 0.6 : 0.35);
+      if (poolRun) splashEnv = sprinting ? 1 : 0.6;   // wading
     }
   } else {
     bobPhase = lerp(bobPhase, round(bobPhase / PI) * PI, 1 - exp(-dt * 8));
@@ -3084,7 +3376,9 @@ void update(float dt) {
   if (useType >= 0) {
     float t = (now - useStart) / (float) USE_MS[useType];
     if (t >= 1) {
-      applyBuff(useType);
+      if (pouring) pourOnDoor();
+      else applyBuff(useType);
+      pouring = false;
       useType = -1;
     } else if (t > 0.2 && t < 0.85) {
       chewTimer += dt;
@@ -3106,7 +3400,7 @@ void update(float dt) {
   anyChase = false;
   for (Enemy e : enemies) {
     float d = dist(player.x, player.y, e.pos.x, e.pos.y);
-    if (d < KILL_DIST && now >= e.stunUntil) {
+    if (d < KILL_DIST && now >= e.stunUntil && !hiddenThreat(e)) {
       die(e);
       return;
     }
@@ -3121,7 +3415,14 @@ void update(float dt) {
   }
 
   updateCans(dt);
+  updateBalls(dt);
+  updateSplashes(dt);
   updateSecrets(dt);
+  if (updatePoolDoor(dt)) {                     // through the wall: the Poolrooms
+    endRun(false);
+    startRun(FUGA, POOL_DAY);
+    return;
+  }
 
   // ---- pick up drops
   for (int k = drops.size() - 1; k >= 0; k--) {
@@ -3198,6 +3499,7 @@ void update(float dt) {
 boolean hitsWall(float x, float y) { return hitsWall(x, y, PLAYER_R); }
 
 boolean hitsWall(float x, float y, float r) {
+  if (hitsColumn(x, y, r)) return true;
   for (int i = cellOf(x - r); i <= cellOf(x + r); i++) {
     for (int j = cellOf(y - r); j <= cellOf(y + r); j++) {
       if (!isWall(i, j)) continue;
@@ -3262,9 +3564,13 @@ int enemyPath(Enemy e) {
   return (!isWall(ei, ej) && flow[ei][ej] >= 0) ? flow[ei][ej] : 999;
 }
 
-// Isa gives no warning until she's within 3 rooms
+String charName(int ch) {
+  return ch == T_LINO ? "Lino" : NAMES[ch];
+}
+
+// Isa gives no warning until she's within 3 rooms; Lino none at all until he shows himself
 boolean hiddenThreat(Enemy e) {
-  return e.ch == T_ISA && enemyPath(e) > 3;
+  return (e.ch == T_ISA && enemyPath(e) > 3) || (e.ch == T_LINO && e.ai != CHASE);
 }
 
 float threatDist(Enemy e, float d) {
@@ -3293,6 +3599,10 @@ void updateAI(Enemy e, float dt) {
   int c = e.ch;
   if (now < e.stunUntil) {
     e.sees = false;
+    return;
+  }
+  if (c == T_LINO && e.ai != CHASE) {
+    swimLino(e, dt);
     return;
   }
   if (c == T_LUCA) {
@@ -3379,7 +3689,11 @@ void updateAI(Enemy e, float dt) {
     if (e.chaseTime >= 30) unlock(23);
     if (now < e.lockUntil) speed = 0;
     else if (now < e.lungeUntil) speed *= LUNGE_MULT * LUNGE_MUL[c];
-    if (e.chaseTime > FRENZY_TIME) speed *= FRENZY_MULT;
+    if (e.chaseTime > FRENZY_TIME && c != T_LINO) speed *= FRENZY_MULT;   // Lino: a plain walk, no frenzy
+    if (c == T_LINO) {
+      e.rise = min(1, e.rise + dt * 1.6);
+      if (linoThrow(e, d)) speed = 0;           // planted while he winds up
+    }
     boolean live = detected && !ghost;
     if (live && c == T_VITOR && d > CELL * 2) {
       int[] pc = predictCell();
@@ -3416,7 +3730,10 @@ void updateAI(Enemy e, float dt) {
     speed *= 0.55;
     target = stepOn(e, e.goalFlow, goalCenter(e));
   }
+  moveEnemy(e, target, speed, dt);
+}
 
+void moveEnemy(Enemy e, PVector target, float speed, float dt) {
   PVector dir = PVector.sub(target, e.pos);
   float m = dir.mag();
   boolean mv = m > 0 && speed > 0;
@@ -3440,6 +3757,382 @@ void updateAI(Enemy e, float dt) {
   e.wasMoving = mv;
   float turn = angleDiff(e.face, want);
   e.face += constrain(turn, -TURN_RATE * dt, TURN_RATE * dt);
+}
+
+// Lino swims under the water: no voice, no warning, only the rings of his wake. He swims your way and rises
+// out of the water when he's close with a clear line to you; then the music starts and he stops now and then
+// to throw water in your face. Lose him and he sinks again, backs off, and comes back
+void swimLino(Enemy e, float dt) {
+  int now = millis();
+  if (e.ai == SEARCH) {                         // he just lost you: under he goes
+    e.ai = WANDER;
+    e.calmUntil = now + LINO_CALM_MS;
+    pickWanderFar(e);
+  }
+  e.rise = max(0, e.rise - dt * 1.2);
+  e.sees = false;
+  float d = dist(player.x, player.y, e.pos.x, e.pos.y);
+  boolean ghost = now < ghostUntil, confused = now < e.confusedUntil, calm = now < e.calmUntil;
+  if (!ghost && !confused && !calm && e.rise <= 0
+    && (d < CELL * TOUCH_CELLS || (d < CELL * LINO_SURFACE && lineOfSight(e.pos.x, e.pos.y, player.x, player.y)))) {
+    surfaceLino(e);
+    return;
+  }
+  float speed = enemyBaseSpeed() * LINO_SWIM;
+  PVector target;
+  if (ghost || confused || calm) {
+    if (e.goalI < 0 || atGoal(e)) pickWander(e);
+    speed *= 0.6;
+    target = stepOn(e, e.goalFlow, goalCenter(e));
+  } else {
+    target = stepOn(e, flow, new PVector(player.x, player.y));
+  }
+  moveEnemy(e, target, speed, dt);
+}
+
+void surfaceLino(Enemy e) {
+  int now = millis();
+  e.ai = CHASE;
+  e.lostTimer = e.senseTimer = e.chaseTime = 0;
+  e.lockUntil = now + 900;                      // rising out of the water...
+  e.lungeUntil = e.lockUntil;                   // ...then a plain walk, no lunge
+  e.nextThrow = now + LINO_THROW_MS;
+  e.windUntil = now + LINO_WIND_MS;             // the first jet as he comes up out of the water
+  e.lastSeen.set(player.x, player.y);
+  e.lastVX = pvx;
+  e.lastVY = pvy;
+  everSpotted = true;
+  chasesStarted++;
+  lastStingMs = -99999;
+  triggerSting(e);
+  splashEnv = max(splashEnv, danger(dist(player.x, player.y, e.pos.x, e.pos.y)));
+  linoFade = 1;
+  voices[T_LINO].rewind();
+  voices[T_LINO].loop();
+}
+
+// he stops, winds up, and throws; true while he's planted for it
+boolean linoThrow(Enemy e, float d) {
+  int now = millis();
+  if (e.windUntil > 0) {
+    if (now >= e.windUntil) {
+      e.windUntil = 0;
+      throwSplash(e);
+    }
+    return true;
+  }
+  if (now >= e.nextThrow && e.sees && d > CELL * LINO_THROW_LO && d < CELL * LINO_THROW_HI) {
+    e.windUntil = now + LINO_WIND_MS;
+    e.nextThrow = now + LINO_THROW_MS;
+    return true;
+  }
+  return false;
+}
+
+// from his hands (wherever he is coming out of the water) at your face, leading you a little
+void throwSplash(Enemy e) {
+  Splash sp = new Splash();
+  float toward = atan2(player.y - e.pos.y, player.x - e.pos.x);
+  sp.ox = e.pos.x + cos(toward) * 40;
+  sp.oy = e.pos.y + sin(toward) * 40;
+  sp.oz = max(WATER_Z + 15, lerp(-360, 40, e.rise) + 200);
+  float lead = dist(sp.ox, sp.oy, player.x, player.y) / SPLASH_SPEED * 0.7;
+  float tx = player.x + pvx * lead, ty = player.y + pvy * lead;
+  float t = max(1, dist(sp.ox, sp.oy, tx, ty)) / SPLASH_SPEED;
+  sp.ivx = (tx - sp.ox) / t;
+  sp.ivy = (ty - sp.oy) / t;
+  sp.ivz = (eyeH - sp.oz) / t + 0.5 * SPLASH_G * t;
+  jetAt(sp, 0);
+  for (int k = 0; k < sp.drops.length; k++) {   // they fan out and string along as they fly
+    PVector r = PVector.random3D();
+    float fan = random(40, 170);
+    sp.drops[k] = new float[]{r.x * fan, r.y * fan, r.z * fan * 0.7, random(0.8, 1.05), random(2, 6)};
+  }
+  splashes.add(sp);
+  for (int n = 0; n < 24; n++) {               // and the water he scoops up splashes around him
+    Drip dp = new Drip();
+    dp.x = sp.ox;
+    dp.y = sp.oy;
+    dp.z = WATER_Z + 5;
+    PVector r = PVector.random3D();
+    dp.vx = r.x * 160 + sp.ivx * 0.1;
+    dp.vy = r.y * 160 + sp.ivy * 0.1;
+    dp.vz = random(250, 520);
+    dp.life = random(0.6, 1.0);
+    drips.add(dp);
+  }
+  splashEnv = max(splashEnv, 0.5 * danger(dist(player.x, player.y, e.pos.x, e.pos.y)));
+}
+
+void updateSplashes(float dt) {
+  for (int k = splashes.size() - 1; k >= 0; k--) {
+    Splash sp = splashes.get(k);
+    sp.age += dt;
+    jetAt(sp, sp.age);
+    if (dist(sp.x, sp.y, sp.z, player.x, player.y, eyeH) < 95) {
+      splashes.remove(k);
+      blind();
+    } else if (sp.z < WATER_Z || isWall(cellOf(sp.x), cellOf(sp.y)) || hitsColumn(sp.x, sp.y, 10)) {
+      splashes.remove(k);
+      splashEnv = max(splashEnv, 0.8 * danger(dist(player.x, player.y, sp.x, sp.y)));
+      float bx = sp.x - sp.vx * 0.03, by = sp.y - sp.vy * 0.03;   // just short of the wall
+      for (int n = 0; n < 30; n++) {
+        Drip dp = new Drip();
+        dp.x = bx;
+        dp.y = by;
+        dp.z = max(sp.z, WATER_Z + 2);
+        PVector r = PVector.random3D();
+        dp.vx = -sp.vx * 0.15 + r.x * 220;
+        dp.vy = -sp.vy * 0.15 + r.y * 220;
+        dp.vz = abs(r.z) * 320 + 60;
+        dp.life = random(0.5, 0.9);
+        drips.add(dp);
+      }
+    }
+  }
+  for (int k = drips.size() - 1; k >= 0; k--) {
+    Drip dp = drips.get(k);
+    dp.vz -= GRAVITY * dt;
+    dp.x += dp.vx * dt;
+    dp.y += dp.vy * dt;
+    dp.z += dp.vz * dt;
+    dp.life -= dt;
+    if (dp.life <= 0 || dp.z < WATER_Z) drips.remove(k);
+  }
+}
+
+// where the jet's front is t seconds after it left him
+void jetAt(Splash sp, float t) {
+  sp.x = sp.ox + sp.ivx * t;
+  sp.y = sp.oy + sp.ivy * t;
+  sp.z = min(sp.oz + sp.ivz * t - 0.5 * SPLASH_G * t * t, WALL_H - 15);
+  sp.vx = sp.ivx;
+  sp.vy = sp.ivy;
+  sp.vz = sp.ivz - SPLASH_G * t;
+}
+
+void blind() {
+  blindUntil = millis() + BLIND_MS;
+  splashEnv = 1;
+  staticBurst = max(staticBurst, 0.4);
+  showMsg("ÁGUA NOS OLHOS!");
+}
+
+// the water: a spray of see-through drops fanning out from his hands, each with a short streak behind it
+void drawSplashes() {
+  if (splashes.isEmpty() && drips.isEmpty()) return;
+  hint(DISABLE_DEPTH_MASK);
+  strokeCap(ROUND);
+  sphereDetail(5);
+  for (Splash sp : splashes) {
+    itemLights(sp.x, sp.y, 1);
+    emissive(30, 70, 95);
+    for (float[] dr : sp.drops) {
+      float t = sp.age * dr[3];                 // the slower ones lag behind: the spray strings out
+      float vx = sp.ivx * dr[3] + dr[0], vy = sp.ivy * dr[3] + dr[1], vz = sp.ivz * dr[3] + dr[2] - SPLASH_G * t;
+      float x = sp.ox + (sp.ivx * dr[3] + dr[0]) * t, y = sp.oy + (sp.ivy * dr[3] + dr[1]) * t;
+      float z = sp.oz + (sp.ivz * dr[3] + dr[2]) * t - 0.5 * SPLASH_G * t * t;
+      if (z < WATER_Z) continue;
+      noStroke();
+      fill(210, 238, 255, 55);                  // see-through: you notice the water by its glint
+      pushMatrix();
+      translate(x, y, z);
+      sphere(dr[4]);
+      popMatrix();
+      stroke(220, 242, 255, 45);
+      strokeWeight(dr[4] * 0.6);
+      line(x, y, z, x - vx * 0.02, y - vy * 0.02, z - vz * 0.02);
+      stroke(255, 230);
+      strokeWeight(max(1.5, dr[4] * 0.35));
+      point(x - dr[4] * 0.3, y, z + dr[4] * 0.4);
+    }
+    emissive(0);
+    noLights();
+  }
+  for (Drip dp : drips) {
+    stroke(215, 240, 255, 110 * constrain(dp.life * 2, 0, 1));
+    strokeWeight(3);
+    line(dp.x, dp.y, dp.z, dp.x - dp.vx * 0.025, dp.y - dp.vy * 0.025, dp.z - dp.vz * 0.025);
+  }
+  noStroke();
+  flush();
+  hint(ENABLE_DEPTH_MASK);
+}
+
+// the rings over Lino while he swims under the surface
+void drawWake(Enemy e) {
+  float sz = 200 + 40 * sin(millis() * 0.004 + e.pos.x * 0.01);
+  world.set("emissive", 0.25);
+  textureWrap(CLAMP);
+  noStroke();
+  noTint();
+  beginShape(QUADS);
+  texture(wakeTex);
+  vertex(e.pos.x - sz / 2, e.pos.y - sz / 2, WATER_Z + 1.5, 0, 0);
+  vertex(e.pos.x + sz / 2, e.pos.y - sz / 2, WATER_Z + 1.5, 1, 0);
+  vertex(e.pos.x + sz / 2, e.pos.y + sz / 2, WATER_Z + 1.5, 1, 1);
+  vertex(e.pos.x - sz / 2, e.pos.y + sz / 2, WATER_Z + 1.5, 0, 1);
+  endShape();
+  flush();
+}
+
+PImage makeWake() {
+  PGraphics g = createGraphics(128, 128);
+  g.beginDraw();
+  g.clear();
+  g.noFill();
+  for (int k = 0; k < 3; k++) {
+    g.stroke(215, 240, 250, 220);
+    g.strokeWeight(3 - k * 0.6);
+    g.ellipse(64, 64, 40 + k * 32, 40 + k * 32);
+  }
+  g.endDraw();
+  return g.get();
+}
+
+// ---- the balls
+void placeBalls() {
+  balls.clear();
+  if (!poolRun) return;
+  int n = round(5 * mapScale());
+  for (int k = 0; k < n; k++) {
+    int[] c = randomOpenCell();
+    Ball b = new Ball();
+    b.x = (c[0] + 0.5) * CELL + random(-100, 100);
+    b.y = (c[1] + 0.5) * CELL + random(-100, 100);
+    b.bob = random(TWO_PI);
+    b.model = ballModels[k % 2 == 0 ? 0 : (int) random(ballModels.length)];
+    balls.add(b);
+  }
+}
+
+// they drift, slow down in the water and bounce off walls and columns; walk into one to kick it
+void updateBalls(float dt) {
+  for (Ball b : balls) {
+    float d = dist(player.x, player.y, b.x, b.y);
+    float touch = PLAYER_R + BALL_R;
+    if (d < touch && d > 0.01) {
+      float nx = (b.x - player.x) / d, ny = (b.y - player.y) / d;
+      b.x = player.x + nx * touch;
+      b.y = player.y + ny * touch;
+      float kick = 260 + sqrt(pvx * pvx + pvy * pvy) * 1.3;
+      b.vx = nx * kick;
+      b.vy = ny * kick;
+      splashEnv = max(splashEnv, 0.7);
+      stepEnv = max(stepEnv, 0.25);
+    }
+    float nx = b.x + b.vx * dt;
+    if (hitsWall(nx, b.y, BALL_R)) b.vx *= -0.6;
+    else b.x = nx;
+    float ny = b.y + b.vy * dt;
+    if (hitsWall(b.x, ny, BALL_R)) b.vy *= -0.6;
+    else b.y = ny;
+    float f = exp(-dt * 0.9);
+    b.vx *= f;
+    b.vy *= f;
+    float sp = sqrt(b.vx * b.vx + b.vy * b.vy);
+    if (sp > 1) {                               // rolling
+      PMatrix3D r = new PMatrix3D();
+      r.rotate(sp * dt / BALL_R, -b.vy / sp, b.vx / sp, 0);
+      b.spin.preApply(r);
+    }
+  }
+}
+
+void drawBalls() {
+  if (balls.isEmpty()) return;
+  float t = millis() / 1000.0;
+  noStroke();
+  for (Ball b : balls) {
+    float dd = dist(player.x, player.y, b.x, b.y);
+    if (dd > CELL * 7) continue;
+    itemLights(b.x, b.y, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5));
+    pushMatrix();
+    translate(b.x, b.y, WATER_Z + BALL_R * 0.35 + sin(t * 1.8 + b.bob) * 3);
+    applyMatrix(b.spin);
+    rotateX(HALF_PI);
+    shape(b.model);
+    popMatrix();
+    flush();
+  }
+  noLights();
+  lightFalloff(1, 0, 0);
+  specular(0);
+}
+
+// colored segments around it (one color = a plain ball), white caps on a beach ball
+PShape makeBall(int[] cols) {
+  PGraphics g = createGraphics(256, 128);
+  g.beginDraw();
+  g.noStroke();
+  for (int k = 0; k < cols.length; k++) {
+    g.fill(cols[k]);
+    g.rect(k * 256.0 / cols.length, 0, 256.0 / cols.length + 1, 128);
+  }
+  if (cols.length > 1) {
+    g.fill(245);
+    g.rect(0, 0, 256, 12);
+    g.rect(0, 116, 256, 12);
+  }
+  g.endDraw();
+  sphereDetail(24);
+  PShape b = createShape(SPHERE, BALL_R);
+  b.setStroke(false);
+  b.setTexture(g.get());
+  b.setSpecular(color(110));
+  b.setShininess(20);
+  return b;
+}
+
+// ---- faces pressed into the tiles: rare, big, white
+void placeFaces() {
+  if (!poolRun) return;
+  int n = round(FACES * mapScale()), placed = 0;
+  for (int tries = 0; tries < 3000 && placed < n; tries++) {
+    int[] c = randomOpenCell();
+    if (flow[c[0]][c[1]] < 3) continue;
+    int[] d = DIRS[(int) random(4)];
+    if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
+    float cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 2), cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 2);
+    boolean crowded = false;
+    for (Decal o : decals) if (dist(o.cx, o.cy, cx, cy) < (o.msg == -2 ? CELL * 4 : CELL * 0.6)) crowded = true;
+    if (crowded) continue;
+    Decal dc = new Decal();
+    dc.nx = -d[0];
+    dc.ny = -d[1];
+    dc.cx = cx;
+    dc.cy = cy;
+    dc.z = 250;
+    dc.w = 264;
+    dc.h = 330;
+    dc.msg = -2;                                // a face (not a writing)
+    dc.tex = tileFaces[random(1) < 0.4 ? T_LINO : (int) random(NAMES.length)];
+    decals.add(dc);
+    placed++;
+  }
+}
+
+// a photo pressed into the wall: white tiles shaded by it, with the grout running across, fading into
+// plain tiles at the edges
+PImage makeTileFace(PImage photo) {
+  PImage src = photo.get(photo.width / 8, 0, photo.width * 3 / 4, photo.height * 15 / 16);
+  src.resize(256, 320);
+  src.loadPixels();
+  int wc = avgColor(poolWallTex);
+  PImage img = createImage(256, 320, RGB);
+  img.loadPixels();
+  float tile = 256 / 264.0 * 25;                // the walls' tile size, in pixels
+  for (int y = 0; y < 320; y++) for (int x = 0; x < 256; x++) {
+    float l = brightness(src.pixels[y * 256 + x]) / 255.0;
+    float l2 = brightness(src.pixels[min(319, y + 3) * 256 + min(255, x + 3)]) / 255.0;
+    float edge = constrain(min(min(x, 255 - x), min(y, 319 - y)) / 40.0, 0, 1);
+    float face = 0.42 + 0.68 * pow(l, 0.85) + (l - l2) * 1.4;   // + an emboss, lit from the top left
+    float v = lerp(1, face, edge * edge * (3 - 2 * edge));
+    if (x % tile < 2 || y % tile < 2) v *= 0.7;
+    img.pixels[y * 256 + x] = color(red(wc) * v, green(wc) * v, blue(wc) * v);
+  }
+  img.updatePixels();
+  return img;
 }
 
 // shortest signed angle from a to b, in [-PI, PI)
@@ -3523,6 +4216,7 @@ float pizzaMul() {
 // otherwise into a secret shortcut to the corridor behind it (nooks are picked first)
 void placeSecrets() {
   secrets.clear();
+  if (poolRun) return;
   ArrayList<int[]> cand = new ArrayList<int[]>();
   for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
     if (isWall(i, j) || flow[i][j] < 4) continue;
@@ -3620,9 +4314,14 @@ boolean secretWall(int i, int j) {
   return false;
 }
 
-// a wall face things can hang on (not a secret one: it's going to open)
+boolean hitsColumn(float x, float y, float r) {
+  for (PVector c : columns) if (dist(x, y, c.x, c.y) < r + COLUMN_R) return true;
+  return false;
+}
+
+// a wall face things can hang on (not a secret one, nor the Poolrooms door: they're going to open)
 boolean wallFace(int i, int j) {
-  return isWall(i, j) && !secretWall(i, j);
+  return isWall(i, j) && !secretWall(i, j) && !(poolDoor != null && poolDoor.wi == i && poolDoor.wj == j);
 }
 
 void updateSecrets(float dt) {
@@ -3696,6 +4395,293 @@ void drawPizzas() {
   noLights();
   lightFalloff(1, 0, 0);
   specular(0);
+}
+
+// =====================================================================
+// THE POOLROOMS: a disguised wall on Luca's day, opened by pouring the Lágrimas do Cabral on it
+boolean lucaDay() {
+  return gameMode == FUGA && runDay >= 0 && runDay < DAYS && DAY_ORDER[runDay] == T_LUCA;
+}
+
+// a dead end far from the start whose far wall hides the door; a walled-in wall cell is preferred,
+// and never one of Cabral's
+void placePoolDoor() {
+  poolDoor = null;
+  if (!lucaDay()) return;
+  ArrayList<int[]> cand = new ArrayList<int[]>();
+  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
+    if (isWall(i, j) || flow[i][j] < 8) continue;
+    int open = 0, oi = 0, oj = 0;
+    for (int[] d : DIRS) {
+      if (isWall(i + d[0], j + d[1])) continue;
+      open++;
+      oi = d[0];
+      oj = d[1];
+    }
+    if (open != 1) continue;
+    int wi = i - oi, wj = j - oj;
+    if (wi < 1 || wj < 1 || wi > GRID - 2 || wj > GRID - 2) continue;
+    boolean taken = false;
+    for (Secret sc : secrets) if ((sc.di == i && sc.dj == j) || abs(sc.wi - wi) + abs(sc.wj - wj) <= 1) taken = true;
+    if (taken) continue;
+    int around = 0;
+    for (int[] d : DIRS) if ((wi + d[0] != i || wj + d[1] != j) && !isWall(wi + d[0], wj + d[1])) around++;
+    cand.add(new int[]{i, j, wi, wj, around});
+  }
+  if (cand.isEmpty()) return;
+  java.util.Collections.shuffle(cand);
+  java.util.Collections.sort(cand, new java.util.Comparator<int[]>() {
+    public int compare(int[] a, int[] b) { return a[4] - b[4]; }
+  });
+  int[] c = cand.get(0);
+  poolDoor = new PoolDoor();
+  poolDoor.di = c[0];
+  poolDoor.dj = c[1];
+  poolDoor.wi = c[2];
+  poolDoor.wj = c[3];
+  lampType[c[0]][c[1]] = 2;                     // a dark dead end: the cracks only show close up, or under the flashlight
+}
+
+// the clue, painted near the start like the other writings
+void placePoolHint() {
+  if (poolDoor == null) return;
+  for (int tries = 0; tries < 3000; tries++) {
+    int[] c = randomOpenCell();
+    if (flow[c[0]][c[1]] < 3 || flow[c[0]][c[1]] > 9) continue;
+    int[] d = DIRS[(int) random(4)];
+    if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
+    float cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 2), cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 2);
+    boolean crowded = false;
+    for (Decal o : decals) if (dist(o.cx, o.cy, cx, cy) < CELL) crowded = true;
+    if (crowded) continue;
+    Decal dc = new Decal();
+    dc.nx = -d[0];
+    dc.ny = -d[1];
+    dc.cx = cx;
+    dc.cy = cy;
+    dc.z = random(175, 245);
+    dc.w = CELL * 0.9;
+    dc.h = dc.w * 0.5;
+    dc.msg = -1;
+    dc.tex = poolHintTex;
+    decals.add(dc);
+    return;
+  }
+}
+
+// the middle of the disguised wall's face, on the dead end's side
+float doorX() { return (poolDoor.di + 0.5) * CELL + (poolDoor.wi - poolDoor.di) * (CELL * 0.5 - 2); }
+float doorY() { return (poolDoor.dj + 0.5) * CELL + (poolDoor.wj - poolDoor.dj) * (CELL * 0.5 - 2); }
+
+// close to the wall and facing it: the Lágrimas go on the wall instead of down your throat
+boolean nearPoolDoor() {
+  if (poolDoor == null || poolDoor.opened || poolDoor.pourT >= 0) return false;
+  float d = dist(player.x, player.y, doorX(), doorY());
+  float aim = abs(angleDiff(yaw, atan2(doorY() - player.y, doorX() - player.x)));
+  return d < POOL_REACH && aim < radians(40)
+    && lineOfSight(player.x, player.y, (poolDoor.di + 0.5) * CELL, (poolDoor.dj + 0.5) * CELL);
+}
+
+void pourOnDoor() {
+  if (poolDoor == null || poolDoor.opened) return;
+  poolDoor.pourT = 0;
+  staticBurst = max(staticBurst, 0.3);
+  showMsg("AS LÁGRIMAS ESCORREM PELA PAREDE...");
+}
+
+// how close you are to the water behind the wall (0..1): you hear it trickling
+float doorWet() {
+  if (poolDoor == null) return 0;
+  return constrain(1 - dist(player.x, player.y, doorX(), doorY()) / (CELL * 2.2), 0, 1);
+}
+
+// the wall melts once the Lágrimas are on it; returns true when you step through
+boolean updatePoolDoor(float dt) {
+  if (poolDoor == null) return false;
+  if (!poolDoor.opened && poolDoor.pourT >= 0) {
+    poolDoor.pourT += dt;
+    staticBurst = max(staticBurst, 0.25 * poolDoor.pourT / POOL_DISSOLVE);
+    if (poolDoor.pourT >= POOL_DISSOLVE) openPoolDoor();
+  }
+  return poolDoor.opened && cellOf(player.x) == poolDoor.wi && cellOf(player.y) == poolDoor.wj;
+}
+
+void openPoolDoor() {
+  poolDoor.opened = true;
+  solid[poolDoor.wi][poolDoor.wj] = false;
+  lampType[poolDoor.wi][poolDoor.wj] = 2;       // no lamp: the way through is lit from the other side
+  level = buildLevel();
+  flowI = -1;
+  updateFlow();
+  staticBurst = max(staticBurst, 0.6);
+  achT = 0;
+  showMsg("A PAREDE CHOROU...");
+}
+
+void drawPoolDoor() {
+  if (poolDoor == null) return;
+  float nx = poolDoor.di - poolDoor.wi, ny = poolDoor.dj - poolDoor.wj;   // the face looks into the dead end
+  float rx = ny, ry = -nx;
+  float t = millis() / 1000.0;
+  textureWrap(CLAMP);
+  noStroke();
+  noTint();
+  if (!poolDoor.opened) {
+    float k = poolDoor.pourT < 0 ? 0 : constrain(poolDoor.pourT / POOL_DISSOLVE, 0, 1);
+    world.set("emissive", 0.06 + 0.04 * sin(t * 1.7) + k);
+    wallQuad(poolDoorTex, doorX(), doorY(), rx, ry, 95, 0, 332);
+    if (k > 0) {                                // the veil's blotchy alpha lets it come through in patches
+      flush();
+      tint(255, 255 * lerp(0.36, 1, k));
+      world.set("emissive", 0.4 + k);
+      wallQuad(poolVeilTex, doorX() + nx, doorY() + ny, rx, ry, CELL * 0.5, 0, WALL_H);
+      noTint();
+    }
+  } else {
+    world.set("emissive", 1.1 + 0.25 * sin(t * 2.3));
+    wallQuad(poolVeilTex, (poolDoor.wi + 0.5) * CELL, (poolDoor.wj + 0.5) * CELL, rx, ry, CELL * 0.5, 0, WALL_H);
+  }
+  flush();
+}
+
+// an upright quad centered on (cx, cy), spanning hw to each side along (rx, ry), from z0 up to z1
+void wallQuad(PImage tex, float cx, float cy, float rx, float ry, float hw, float z0, float z1) {
+  beginShape(QUADS);
+  texture(tex);
+  vertex(cx - rx * hw, cy - ry * hw, z1, 0, 0);
+  vertex(cx + rx * hw, cy + ry * hw, z1, 1, 0);
+  vertex(cx + rx * hw, cy + ry * hw, z0, 1, 1);
+  vertex(cx - rx * hw, cy - ry * hw, z0, 0, 1);
+  endShape();
+}
+
+// glazed square tiles with grout lines (n across the texture)
+PImage makeTiles(int n, int base, int grout, int seed) {
+  java.util.Random rng = new java.util.Random(seed);
+  int sz = 512;
+  float t = sz / (float) n;
+  PGraphics g = createGraphics(sz, sz);
+  g.beginDraw();
+  g.background(grout);
+  g.noStroke();
+  for (int i = 0; i < n; i++) for (int j = 0; j < n; j++) {
+    float k = 0.95 + rng.nextFloat() * 0.07;
+    if (rng.nextFloat() < 0.03) k *= 0.9;        // the odd off-shade tile
+    float x = i * t + 1.5, y = j * t + 1.5, w = t - 3;
+    g.fill(red(base) * k, green(base) * k, blue(base) * k);
+    g.rect(x, y, w, w, 2);
+    g.fill(255, 40);                             // the glaze catching the light along the top edge
+    g.rect(x + 2, y + 1, w - 4, 2);
+  }
+  g.endDraw();
+  return g.get();
+}
+
+int avgColor(PImage img) {
+  img.loadPixels();
+  float r = 0, gg = 0, b = 0;
+  int n = 0;
+  for (int p = 0; p < img.pixels.length; p += 37) {
+    r += red(img.pixels[p]);
+    gg += green(img.pixels[p]);
+    b += blue(img.pixels[p]);
+    n++;
+  }
+  return color(r / n, gg / n, b / n);
+}
+
+// the disguised wall: a small hole with pool tiles behind it and the cracks running out of it. The rest is
+// transparent, so it sits on the real wallpaper
+PImage makePoolDoor() {
+  java.util.Random rng = new java.util.Random(31);
+  int dark = lerpColor(avgColor(wall), color(0), 0.5);
+  int w = 256, h = 448;
+  PGraphics t = createGraphics(w, h);           // the tiles showing through the hole
+  t.beginDraw();
+  t.background(85, 150, 168);
+  t.noStroke();
+  for (int x = 0; x < w; x += 14) for (int y = 0; y < h; y += 14) {
+    t.fill(170 + rng.nextFloat() * 25, 225 + rng.nextFloat() * 15, 238);
+    t.rect(x + 1, y + 1, 12, 12, 1);
+  }
+  t.endDraw();
+  PGraphics m = createGraphics(w, h);
+  m.beginDraw();
+  m.background(0);
+  m.noStroke();
+  m.fill(255);
+  m.beginShape();
+  for (int k = 0; k < 14; k++) {
+    float a = k * TWO_PI / 14, r = 14 + rng.nextFloat() * 18;
+    m.vertex(150 + cos(a) * r * 0.8, 175 + sin(a) * r * 1.3);
+  }
+  m.endShape(CLOSE);
+  m.endDraw();
+  PImage tiles = t.get();
+  tiles.mask(m.get());
+
+  PGraphics g = createGraphics(w, h);
+  g.beginDraw();
+  g.clear();
+  g.image(tiles, 0, 0);
+  g.noFill();
+  g.stroke(dark);
+  float[][] cracks = {{150, 150, 5, -14, 7}, {148, 200, -5, 14, 6}, {128, 170, -14, -3, 4}, {170, 180, 13, 5, 4}};
+  for (float[] c : cracks) {                    // the cracks running out of the hole
+    float x = c[0], y = c[1];
+    g.strokeWeight(2.2);
+    g.beginShape();
+    g.vertex(x, y);
+    for (int k = 0; k < c[4]; k++) {
+      x += c[2] * (0.6 + rng.nextFloat() * 0.8);
+      y += c[3] * (0.6 + rng.nextFloat() * 0.8);
+      g.vertex(x + (rng.nextFloat() - 0.5) * 6, y + (rng.nextFloat() - 0.5) * 6);
+      if (rng.nextFloat() < 0.3) {              // a hairline branch
+        g.endShape();
+        g.strokeWeight(1.2);
+        g.line(x, y, x + (rng.nextFloat() - 0.5) * 30, y + (rng.nextFloat() - 0.5) * 30);
+        g.strokeWeight(2.2);
+        g.beginShape();
+        g.vertex(x, y);
+      }
+    }
+    g.endShape();
+  }
+  g.endDraw();
+  return g.get();
+}
+
+// the Poolrooms seen through the wall: bright tiles under rippling light. Its alpha is blotchy noise
+// (0.36..1), so fading its tint in from 0.36 brings it through in patches, like the wall melting
+PImage makePoolVeil() {
+  java.util.Random rng = new java.util.Random(41);
+  PGraphics g = createGraphics(256, 512);
+  g.beginDraw();
+  g.background(70, 140, 160);
+  g.noStroke();
+  for (int x = 0; x < 256; x += 16) for (int y = 0; y < 512; y += 16) {
+    g.fill(200 + rng.nextFloat() * 25, 238 + rng.nextFloat() * 10, 250);
+    g.rect(x + 1, y + 1, 14, 14, 1);
+  }
+  g.noFill();
+  g.stroke(255, 110);
+  g.strokeWeight(2);
+  for (int k = 0; k < 14; k++) {                // caustics
+    float y0 = rng.nextFloat() * 512, ph = rng.nextFloat() * TWO_PI;
+    g.beginShape();
+    for (float x = 0; x <= 256; x += 8) g.vertex(x, y0 + sin(x * 0.05 + ph) * 10);
+    g.endShape();
+  }
+  g.endDraw();
+  PImage img = g.get();
+  img.format = ARGB;
+  img.loadPixels();
+  for (int p = 0; p < img.pixels.length; p++) {
+    float n = constrain((noise((p % img.width) * 0.03, (p / img.width) * 0.03, 7) - 0.25) / 0.5, 0, 1);
+    img.pixels[p] = (img.pixels[p] & 0xFFFFFF) | ((int) (255 * (0.36 + 0.64 * n)) << 24);
+  }
+  img.updatePixels();
+  return img;
 }
 
 // a textured OBJ as one triangle mesh (the Blender export flips handedness: mirror x back)
@@ -3795,8 +4781,9 @@ void stepCan(Can c, float h) {
       c.vz = -c.vz * 0.3;
     }
   }
-  if (c.z <= CAN_FLOOR) {
-    c.z = CAN_FLOOR;
+  float floorZ = CAN_FLOOR + (poolRun ? WATER_Z : 0);   // in the Poolrooms they float
+  if (c.z <= floorZ) {
+    c.z = floorZ;
     if (c.vz < -90) {                         // bounce
       canHit(c, -c.vz);
       c.vz = -c.vz * 0.32;
@@ -3996,12 +4983,14 @@ boolean playerSees(Enemy e) {
   return lineOfSight(player.x, player.y, e.pos.x, e.pos.y);
 }
 
-// Luca: vanish and reappear 5-8 rooms away, out of your sight
+// Luca: vanish and reappear LUCA_NEAR-LUCA_FAR rooms from you, out of your sight, and never closer than he
+// already was (already that far off, he just keeps walking)
 void teleport(Enemy e) {
   e.nextTeleport = millis() + (int) random(14000, 24000);
+  int now = enemyPath(e);
   ArrayList<int[]> cand = new ArrayList<int[]>();
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
-    if (solid[i][j] || flow[i][j] < 5 || flow[i][j] > 8) continue;
+    if (solid[i][j] || flow[i][j] < LUCA_NEAR || flow[i][j] > LUCA_FAR || flow[i][j] < now) continue;
     if (lineOfSight((i + 0.5) * CELL, (j + 0.5) * CELL, player.x, player.y)) continue;
     cand.add(new int[]{i, j});
   }
@@ -4012,7 +5001,7 @@ void teleport(Enemy e) {
     e.ai = WANDER;
     pickWander(e);
   } else {
-    int[] g = roughArea(3);
+    int[] g = roughArea(LUCA_SEARCH);
     e.ai = SEARCH;
     e.lastSeen.set((g[0] + 0.5) * CELL, (g[1] + 0.5) * CELL);
     e.searchTimer = 0;
@@ -4143,7 +5132,7 @@ float lampPower(int i, int j) {
   float cx = (i + 0.5) * CELL, cy = (j + 0.5) * CELL;
   float e = 0;
   for (Enemy en : enemies) {
-    if (en.ch == T_ISA) continue;                      // Isa leaves the lights alone
+    if (en.ch == T_ISA || hiddenThreat(en)) continue;  // Isa leaves the lights alone, and so does Lino until he shows
     e = max(e, constrain(1 - dist(cx, cy, en.pos.x, en.pos.y) / radius, 0, 1));
   }
   if (e > 0 && noise(i * 3.1 + 40, j * 5.7, ms * 0.015) < e * 0.85) p *= 0.06;
@@ -4173,6 +5162,10 @@ void updateLampGrid() {
 void updateVoices() {
   int now = millis();
   for (Enemy e : enemies) {
+    if (e.ch == T_LINO) {
+      updateLinoMusic(e);
+      continue;
+    }
     float d = dist(player.x, player.y, e.pos.x, e.pos.y);
     int path = enemyPath(e);
     float heard = path < 999 ? max(d, path * CELL * 0.8) : d;
@@ -4186,6 +5179,20 @@ void updateVoices() {
     float ang = atan2(e.pos.y - player.y, e.pos.x - player.x) - yaw;
     setVoice(voices[e.ch], min(gain, 6) + volDb(V_VOICE), sin(ang));
   }
+}
+
+// Lino's music: the climax, from the moment he shows himself; it fades out once he loses you
+void updateLinoMusic(Enemy e) {
+  AudioPlayer m = voices[T_LINO];
+  boolean on = e.ai == CHASE;
+  linoFade = on ? 1 : max(0, linoFade - frameDt / 2.5);
+  if (linoFade <= 0) {
+    if (m.isPlaying()) m.pause();
+    return;
+  }
+  if (on && !m.isPlaying()) m.loop();          // back from the pause menu
+  float ang = atan2(e.pos.y - player.y, e.pos.x - player.x) - yaw;
+  setVoice(m, lerp(-40, 0, sqrt(linoFade)) + volDb(V_VOICE), sin(ang) * 0.4);
 }
 
 void setVoice(Controller v, float gain, float pan) {
@@ -4260,7 +5267,13 @@ void render() {
   world.set("lampZ", WALL_H - 25);
   world.set("exposure", EXPOSURE_BASE * exposureAdapt);
   world.set("fogDist", FOG_DIST);
-  world.set("fogColor", 0.016 * haze, 0.013 * haze, 0.007 * haze);
+  if (poolRun) world.set("fogColor", 0.005 * haze, 0.012 * haze, 0.016 * haze);
+  else world.set("fogColor", 0.016 * haze, 0.013 * haze, 0.007 * haze);
+  world.set("lampTint", poolRun ? 0.66 : 1.0, poolRun ? 0.78 : 0.92, poolRun ? 0.88 : 0.72);
+  world.set("bounceTint", poolRun ? 0.5 : 0.95, poolRun ? 0.82 : 0.78, poolRun ? 0.95 : 0.52);
+  world.set("pool", poolRun ? 1.0 : 0.0);
+  world.set("water", 0.0);
+  world.set("time", millis() / 1000.0);
   world.set("volOn", VOLUMETRIC ? 1.0 : 0.0);
   world.set("flash", flashlightOn ? 2.5 * flicker : 0.0);
   world.set("glow", 0.22 * flicker);
@@ -4268,7 +5281,18 @@ void render() {
 
   textureWrap(REPEAT);
   shape(level);
+  if (poolRun) {
+    world.set("water", 1.0);
+    shape(waterMesh);
+    flush();
+    world.set("water", 0.0);
+    world.set("emissive", 0.011);               // just above 0: lit with their own round normals, not snapped like walls
+    shape(columnMesh);
+    flush();
+    world.set("emissive", 0.0);
+  }
   drawDecals();
+  drawPoolDoor();
   drawArrows();
   drawExit();
   drawPanels();
@@ -4278,16 +5302,28 @@ void render() {
 
   drawDrops3D();
   drawCans3D();
+  drawBalls();
+  drawSplashes();
   drawPizzas();
   drawXray();
   drawViewModel3D();
 
   begin2D();
   applyLens();                       // 1. the player's eye: fish-eye, grain, micro-blur
+  applyWet();                        //    ...and Lino's water in it
   drawOverlay(dgV, pulse);           // 2. camcorder overlay + on-screen text
   applyPost(dgV, spotFlash * 0.5);   // 3. the camcorder itself
   drawHUD();                         // 4. gameplay HUD on top
   end2D();
+}
+
+void applyWet() {
+  float a = constrain((blindUntil - millis()) / 1100.0, 0, 1);   // full for about 2 s, then clearing
+  if (a <= 0) return;
+  wet.set("time", millis() / 1000.0);
+  wet.set("amount", a);
+  wet.set("aspect", width / (float) height);
+  filter(wet);
 }
 
 void applyLens() {
@@ -4324,7 +5360,8 @@ void drawPanels() {
       if (solid[i][j]) continue;
       float p = lampP[i][j];
       float cx = (i + 0.5) * CELL, cy = (j + 0.5) * CELL;
-      tint(lerp(12, 255, p), lerp(11, 245, p), lerp(9, 205, p));
+      if (poolRun) tint(lerp(10, 215, p), lerp(12, 238, p), lerp(14, 255, p));
+      else tint(lerp(12, 255, p), lerp(11, 245, p), lerp(9, 205, p));
       beginShape(QUADS);
       texture(panelTex);
       vertex(cx - hw, cy - hh, z, 0, 0);
@@ -4344,7 +5381,8 @@ void drawEnemy(Enemy e) {
   float dg = danger(d);
   boolean stunned = millis() < e.stunUntil;
   float s = 300;
-  float base = 40;
+  float base = e.ch == T_LINO ? lerp(-360, 40, e.rise) : 40;   // Lino rises out of the water
+  if (e.ch == T_LINO && e.rise < 0.95) drawWake(e);
   float glitch = stunned ? 35 : 60 * sq(max(dg, chaseLvl * 0.5));
   int strips = 14;
 
@@ -4399,6 +5437,8 @@ void applyPost(float dg, float hit) {
   post.set("vhs", state == MENU ? max(VHS_AMOUNT, 0.6) : VHS_AMOUNT);
   post.set("fisheye", OSD_FISHEYE);
   post.set("aspect", width / (float) height);
+  boolean cold = poolRun && state == PLAYING;
+  post.set("tone", cold ? 0.94 : 1.02, 1.0, cold ? 1.06 : 0.92);
   filter(post);
 }
 
@@ -4666,6 +5706,7 @@ void drawHazard(float x, float y, float w, float h) {
 
 String rosterTitle() {
   if (gameMode == FUGA) {
+    if (runDay == POOL_DAY) return "???";
     if (runDay == RECUP_DAY) return "TODOS";
     if (runDay == FINAL_DAY) return "VS. 6";
     return NAMES[DAY_ORDER[runDay]].toUpperCase();
@@ -4674,6 +5715,7 @@ String rosterTitle() {
 }
 
 String dayLabel() {
+  if (runDay == POOL_DAY) return "POOLROOMS";
   return runDay == RECUP_DAY ? "RECUPERAÇÃO" : "DIA " + (runDay + 1);
 }
 
@@ -4743,7 +5785,7 @@ void drawHUD() {
       text(dayLabel(), width / 2, height / 2 - 150);
       textSize(30);
       fill(200, 40, 30, a);
-      String sub = runDay == RECUP_DAY ? "TODOS ELES  —  NO ESCURO"
+      String sub = runDay == POOL_DAY ? "VOCÊ NÃO ESTÁ SOZINHO" : runDay == RECUP_DAY ? "TODOS ELES  —  NO ESCURO"
         : (runDay == FINAL_DAY ? "VS. 6  —  TODOS ELES" : rosterTitle() + "  —  " + NICKS[DAY_ORDER[runDay]].toUpperCase());
       text(sub, width / 2, height / 2 - 100);
       textFont(fontMono);
@@ -5080,7 +6122,7 @@ void drawDeath() {
       text(dayLabel() + "  —  Certificados: " + certsTaken + "/" + certsPlaced, width / 2, height / 2 - 20);
       textSize(28);
       fill(220, 255 * a);
-      text("Pego por " + NAMES[killerCh] + "  ·  " + fmtTime(survived), width / 2, height / 2 + 32);
+      text("Pego por " + charName(killerCh) + "  ·  " + fmtTime(survived), width / 2, height / 2 + 32);
     }
     textSize(20);
     fill(200, 255 * a);
@@ -5118,7 +6160,8 @@ void drawWin() {
   textFont(fontBig);
   textSize(80);
   fill(30, 255 * a);
-  text(runDay == RECUP_DAY ? "RECUPERAÇÃO CONCLUÍDA" : (runDay == FINAL_DAY ? "SEMANA CONCLUÍDA" : "DIA " + (runDay + 1) + " CONCLUÍDO"),
+  text(runDay == POOL_DAY ? "POOLROOMS CONCLUÍDA" : runDay == RECUP_DAY ? "RECUPERAÇÃO CONCLUÍDA"
+    : (runDay == FINAL_DAY ? "SEMANA CONCLUÍDA" : "DIA " + (runDay + 1) + " CONCLUÍDO"),
     width / 2, height / 2 - 160);
   textFont(fontUI);
   textSize(34);
@@ -5127,7 +6170,8 @@ void drawWin() {
   int h = hoursValidated();
   fill(runDay < DAYS && h > winHoursBefore ? color(30, 120, 40, 255 * a) : color(60, 255 * a));
   if (runDay < DAYS) text("Horas validadas: " + h + "h/36h" + (h > winHoursBefore ? "   (+" + (h - winHoursBefore) + "h)" : ""), width / 2, height / 2 - 30);
-  else text(runDay == RECUP_DAY ? "Aprovado na recuperação." : "Os certificados do VS. 6 não contam horas.", width / 2, height / 2 - 30);
+  else text(runDay == POOL_DAY ? "Você escapou do Lino." : runDay == RECUP_DAY ? "Aprovado na recuperação."
+    : "Os certificados do VS. 6 não contam horas.", width / 2, height / 2 - 30);
   if (runDay < DAYS) {
     fill(170, 110, 0, 255 * a);
     if (runDay + 1 < DAYS) text("★ Desbloqueado: Dia " + (runDay + 2) + " — " + NAMES[DAY_ORDER[runDay + 1]], width / 2, height / 2 + 8);
@@ -5994,7 +7038,7 @@ void resumeGame() {
   lastMs = millis();
   releaseKeys();
   lockMouse(true);
-  for (Enemy e : enemies) voices[e.ch].loop();
+  for (Enemy e : enemies) if (e.ch != T_LINO) voices[e.ch].loop();   // Lino's music resumes in updateLinoMusic
   saveSettings();
 }
 
@@ -6023,7 +7067,11 @@ void shiftClock(int d) {
     e.stunUntil += d;
     e.confusedUntil += d;
     e.nextTeleport += d;
+    e.calmUntil += d;
+    e.nextThrow += d;
+    if (e.windUntil > 0) e.windUntil += d;
   }
+  blindUntil += d;
   for (Can c : cans) {
     c.lastClank += d;
     c.lastAlert += d;
