@@ -1,4 +1,4 @@
-// BACKROOMS: Escape from the Nerdolas — v1.1
+// BACKROOMS: Escape from the Nerdolas — v1.2
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
@@ -7,37 +7,40 @@
 
 import ddf.minim.*;
 import ddf.minim.ugens.*;
+import ddf.minim.spi.*;
 import com.jogamp.newt.opengl.GLWindow;
 
 // ---------------- tuning knobs ----------------
-int GRID = 25;                     // maze size in cells (odd) — changes per mode
+int GRID = 25;                     // floor sampling grid (odd) — changes per mode
 final int MAX_GRID     = 37;
 final int GRID_ENDLESS = 25, GRID_DAY = 31, GRID_FINAL = 37;
 final float CELL         = 400;    // size of one cell in world units
-final float WALL_H       = 420;    // ceiling height
-final float EYE_H        = 230;    // camera height
+final float WALL_H       = 300;    // ceiling height
+final float EYE_H        = 165;    // camera height
 final float PLAYER_R     = 60;     // player collision radius
 final float WALK_SPEED   = 260;    // units per second
 final float SPRINT_SPEED = 440;
 final float STAMINA_MAX  = 2.5;    // seconds of sprint
 final float ENEMY_START  = 190;
 final float ENEMY_MAX    = 400;
-final float ENEMY_RAMP   = 3.5;    // enemy speed gained per second survived
+final float ENEMY_RAMP   = 1.4;    // enemy speed gained per second survived
 final float GRACE_TIME   = 3;      // seconds before the enemies start hunting
 final float KILL_DIST    = 110;
 final float MOUSE_SENS   = 0.0025;
 
 // ---------------- visuals ----------------
-final float FOG_DIST      = 2600;
-final float EXPOSURE_BASE = 0.6;
+final float FOG_DIST      = 99999; // so basically no fog
+final float EXPOSURE_BASE = 0.72;
+final float BASE_FOV = 50;
 final boolean VOLUMETRIC  = true;
+final boolean SHOW_WET_MASK = false; // true: highlight the procedural wet patches in cyan
 final float VHS_AMOUNT    = 0.15;
 final float HANDHELD      = 0.5;
 final int   OUTLETS       = 26;    // wall props (scaled with map size)
 final int   VENTS         = 12;
 final float LENS_FISHEYE  = 0.2;   // the player's vision (world + hands): barrel distortion
-final float LENS_GRAIN    = 0.022; // film grain on the player's vision (very subtle)
-final float LENS_SOFT     = 0.6;   // grainy micro-blur, a bit softer toward the edges (very subtle)
+final float LENS_GRAIN    = 0.005; // film grain on the player's vision (very subtle)
+final float LENS_SOFT     = 0.3;   // grainy micro-blur, a bit softer toward the edges (very subtle)
 final float OSD_FISHEYE   = 0.04;  // the whole camcorder image, on-screen text included
 final int   MAP_FLOATS    = (MAX_GRID * MAX_GRID + 3) / 4;   // 4 cells packed per float
 final int   MAP_VEC4      = (MAP_FLOATS + 3) / 4;
@@ -45,14 +48,14 @@ final float[] PACK        = {1, 17, 289, 4913};             // base-17 packing f
 
 // ---------------- player ----------------
 final float CROUCH_SPEED = 150;
-final float CROUCH_EYE   = 150;
-final float PEEK_ANGLE   = 0.36;   // how far the torso tilts when leaning (radians, ~20 deg)
+final float CROUCH_EYE   = 105;
+final float PEEK_ANGLE   = 0.23;   // how far the torso tilts when leaning (radians, ~13 deg)
 final float PEEK_PIVOT   = 0.45;   // the lean pivots at the hips: this fraction of the eye height
-final float PEEK_MIN     = 28;     // less room than this beside you = no lean
-final float PEEK_HEAD_R  = 25;     // the head's clearance from walls while leaning
-final float PEEK_WALL    = 300;    // the wall in front must be this close to count as a corner
+final float PEEK_MIN     = 20;     // less room than this beside you = no lean
+final float PEEK_HEAD_R  = 30;     // the head's clearance from walls while leaning
+final float PEEK_WALL    = 220;    // the wall in front must be this close to count as a corner
 final float PEEK_VIEW_GAIN = 250;  // leaning must open the view at least this much further
-final float PEEK_ROLL    = radians(45);   // head tilt at full lean (the view rolls 0 -> 45 deg)
+final float PEEK_ROLL    = radians(16);   // head tilt at full lean (the view rolls 0 -> 16 deg)
 
 // ---------------- modes ----------------
 final int ENDLESS = 0, FUGA = 1;
@@ -102,7 +105,7 @@ final String[] ITEM_DESC   = {
   "Pilhado por 10 segundos: você vê os nerdolas através das paredes. Sobra a lata.",
   "Arremesse e faça barulho: os nerdolas que ouvirem vão checar onde ela caiu."
 };
-final String[] ITEM_KEYS   = {"1", "2", "3", "4", "Q", "5", "G"};
+final String[] ITEM_KEYS   = {"1", "2", "3", "4", "R", "5", "G"};
 final boolean[] ITEM_DRINK = {false, false, true, false, false, true, false};
 final int[]   USE_MS       = {1500, 1700, 1300, 2000, 0, 1600, 0};
 final int[]   BUFF_MS      = {8000, 15000, 10000, 30000, 0, 10000, 0};
@@ -127,8 +130,8 @@ final int   MAX_CANS    = 8;
 final int   START_CANS  = 2;          // empty cans you start every run with
 
 // ---------------- the blessing of Cabral ----------------
-final int   SECRETS     = 3;          // secret passages per map (one hides the pizza while this phase's is uneaten)
-final int   SECRET_NEAR = 14;         // prefer dead ends within this many rooms of the start
+final int   SECRETS     = 3;          // maximum optional passages; only naturally dark wall faces qualify
+final int   SECRET_NEAR = 14;         // prefer marked panels within this walking distance of the start
 final float PIZZA_BONUS = 0.08;       // Pizza do Papponi: +8% max stamina each, forever
 final int   PHASES      = 9;          // POLIWEEK days 0-5, VS. 6, RECUPERAÇÃO, ENDLESS: one pizza each
 final float REVEAL_TIME = 1.0;        // seconds of flashlight on the wall to open it
@@ -146,9 +149,8 @@ final int DECALS = 9;
 
 // ---------------- nextbot AI ----------------
 final float SIGHT_CELLS  = 10;     // seen from this far when you're fully lit
-final float SIGHT_FLASH  = 14;     // ...with your flashlight on (you're a beacon)
+final float SIGHT_FLASH  = 14;     // maximum when lit; camera light also checks its short reach
 final float SIGHT_DARK   = 0.2;    // in pitch dark, sight shrinks to 20% (2 rooms; crouched and still: under 1)
-final float VIEW_HALF    = radians(60);   // they only see in a 120-degree cone ahead of them
 final float TURN_RATE    = 5;      // how fast they turn their head (rad/s)
 final float DEADEND_DARK = 0.6;    // chance a dead end has no lamp: hiding spots
 final float LAMP_REACH   = 1.2;    // a lamp lights its own room well and the next ones only a little (rooms)
@@ -231,7 +233,7 @@ final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "CATÁLOGO",
 final String[] CAT_TABS = {"NERDOLAS", "PICHAÇÕES", "ITENS", "ESTATÍSTICAS"};
 
 PImage[] faces = new PImage[NAMES.length];
-AudioPlayer[] voices = new AudioPlayer[NAMES.length];
+
 
 // ---------------- progress (saved) ----------------
 boolean[] dayBeaten = new boolean[8];
@@ -247,6 +249,8 @@ float totalTime;
 Minim minim;
 AudioPlayer ambience;
 AudioOutput out;
+Gain fxBus, voiceBus;
+Summer fxMix, voiceMix;
 Oscil hum, hum2, heart;
 Multiplier stepAmp, breathAmp, staticAmp;
 Oscil[] sting = new Oscil[3];
@@ -263,18 +267,94 @@ float chaseLvl, chaseBeat, kickEnv, tickEnv;
 int lastBeatStep;
 AudioSample flashSnd;
 
+// ---------------- 3D audio ----------------
+Delay stepEcho;                     // room echo on your footsteps
+Multiplier echoWet;
+float roomOpen;                     // 0 = tight corridor, 1 = big open hall
+MoogFilter distLP;                  // distant one-shot events
+Pan distPan;
+Multiplier distNAmp;
+Oscil distO;
+int distType = -1;
+float distT, distVol, nextDistant = 12;
+
+// a looping voice: muffled by walls in the way, panned by direction
+class Voice3D {
+  FilePlayer fp;
+  TickRate rate;                         // fixed: corrects the file's sample rate to the output's
+  MoogFilter lp = new MoogFilter(12000, 0);
+  Gain gain = new Gain(-80);
+  Pan pan = new Pan(0);                  // mono in, equal-power stereo out
+  float g = -80, p = 0, c = 12000;
+  Voice3D(String file) {
+    AudioRecordingStream st = minim.loadFileStream(file);
+    float fileRate = st.getFormat().getSampleRate();
+    fp = new FilePlayer(st);
+    rate = new TickRate(fileRate / out.sampleRate());
+    rate.setInterpolation(true);
+    fp.patch(rate).patch(lp).patch(gain).patch(pan).patch(voiceMix);
+    println(file + ": " + fileRate + " Hz, " + st.getFormat().getChannels() + " ch  ->  output " + out.sampleRate() + " Hz");
+  }
+  void set(float tg, float tp, float tc, float dt) {
+    float k = 1 - exp(-dt * 9);
+    g = lerp(g, tg, k);
+    p = lerp(p, tp, k);
+    c = lerp(c, tc, k);
+    apply();
+  }
+  void snap(float tg, float tp, float tc) {
+    g = tg;
+    p = tp;
+    c = tc;
+    apply();
+  }
+  void apply() {
+    gain.setValue(g);
+    pan.setPan(constrain(p, -1, 1));
+    lp.frequency.setLastValue(constrain(c, 80, 12000));
+  }
+  void play()   { fp.play(); }
+  void loop()   { fp.loop(); }
+  void pause()  { fp.pause(); }
+  void rewind() { fp.rewind(); }
+  boolean isPlaying() { return fp.isPlaying(); }
+}
+
+// a nerdola's footsteps, positioned in 3D
+class Steps3D {
+  MoogFilter lp = new MoogFilter(420, 0.35);
+  Multiplier amp = new Multiplier(0);
+  Pan pan = new Pan(0);
+  float env, phase;
+  Steps3D() {
+    new Noise(1, Noise.Tint.BROWN).patch(lp).patch(amp).patch(pan).patch(fxMix);
+  }
+}
+
+Voice3D[] voices = new Voice3D[NAMES.length];
+Steps3D[] eSteps = new Steps3D[6];
+
 // ---------------- graphics ----------------
 PImage carpet, wall, roof, menuImg, panelTex, certTex, exitTex, staticImg, outletTex, ventTex, pucprBg;
 PImage[] itemTex = new PImage[ITEM_NAMES.length];
 PImage[] graffiti = new PImage[WALL_MSGS.length];
 PShape level;
-PShader world, post, lens;
+PShader world, post, lens, tape;
 GLWindow win;
 PFont fontBig, fontUI, fontMono, fontGraffiti, fontHud, fontMail;
 float exposureAdapt = 1, camGain = 0;
 float camX, camY, camZ, camDX, camDY, camDZ;
 
 boolean[][] solid;
+// One wall system: 100 world units = 1 metre; CELL = 4 metres.
+// Boundary solid cells represent exterior void, never interior wall blocks.
+final float WALL_THICKNESS = 100;
+final int WALL_SUBDIV = 8;
+boolean[][] wallVoxels;
+boolean[][] wallX, wallY;
+final int WALL_FLOATS = (MAX_GRID * MAX_GRID + 7) / 8;
+final int WALL_VEC4 = (WALL_FLOATS + 3) / 4;
+float[] wallU = new float[WALL_VEC4 * 4];
 int[][] flow;
 int flowI = -1, flowJ = -1;
 int[][] lampType;
@@ -305,13 +385,13 @@ ArrayList<Can> cans = new ArrayList<Can>();
 PShape canModel;
 AudioSample[] clanks;
 
-// a dark dead end hiding a passage: shine your flashlight on its far wall
+// A marked wall panel opens a shortcut when illuminated.
 class Secret {
-  int di, dj;          // the dead end
-  int wi, wj;          // the wall cell that opens into the hidden nook
+  int di, dj;          // the near floor cell
+  int wi, wj;          // the floor cell across the opening panel
   float light;         // how long it's been in your beam
-  boolean open, pizza, eaten;
-  Decal mark;          // Cabral's sun painted on the wall: in the dark it only shows under the flashlight
+  boolean opened, pizza, eaten;
+  Decal mark;          // Cabral's sun uses ordinary wall-paint lighting in an unlit spawn area.
 }
 
 ArrayList<Secret> secrets = new ArrayList<Secret>();
@@ -358,7 +438,9 @@ class Enemy {
   boolean sees;
   float lostTimer, searchTimer, senseTimer, chaseTime;
   int lockUntil, lungeUntil, screamUntil, stunUntil, confusedUntil, nextTeleport;
-  int[][] goalFlow;
+  int[][] goalFlow, navFlow;
+  ArrayList<PVector> navRoute = new ArrayList<PVector>();
+  int navIndex;
   int goalI = -1, goalJ = -1;
   float sx, sy;
   float unseenFor;        // Luca: how long you haven't been looking at him
@@ -367,6 +449,9 @@ class Enemy {
   float face = random(TWO_PI);   // where it's looking
   float scanBase, scanT;         // looking around while it stands still
   boolean wasMoving;
+  float speedNow;
+  int corners;
+  float apX, apY;
 }
 
 ArrayList<Enemy> enemies = new ArrayList<Enemy>();
@@ -396,6 +481,13 @@ boolean taserHit;
 float tipSX, tipSY, biteSX, biteSY;
 int itemsUsed, stuns;
 
+// dynamic inventory HUD
+float[] slotShow = new float[ITEM_NAMES.length], slotX = new float[ITEM_NAMES.length], slotPop = new float[ITEM_NAMES.length];
+int[] lastInv = new int[ITEM_NAMES.length];
+
+ArrayList<Integer> slotOrder = new ArrayList<Integer>();   // consumables, in the order you picked them up
+String[] slotKey = {"", "", "", "", "R", "", "G"};                   // label each slot was last drawn with
+
 // POLIWEEK
 int certsTaken, certsPlaced, certsRequired;
 boolean exitOpen;
@@ -424,12 +516,20 @@ PVector player = new PVector();
 float spotFlash;
 
 // the Eye
-float eyeOpen, eyeLX, eyeLY;
-int blinkUntil, nextBlink;
+final float EYE_SCALE = 0.8;                  // slightly smaller than before
+final int[] EYE_RANK = {0, 5, 4, 3, 2, 1};    // none, hunting, chase, stunned, confused, search
+
+class Eye {
+  float opening, lx, ly, x = -1, sc = EYE_SCALE, show, seed = random(100);
+  int blinkUntil, nextBlink, twUntil;
+  float twx, twy, twr;
+}
+Eye mainEye = new Eye();
+Eye[] packEyes = new Eye[6];
 
 float yaw, pitch, stamina, bobPhase;
 float eyeH = EYE_H;
-float fov = radians(72), roll;
+float fov = radians(BASE_FOV), roll;
 boolean moving, sprinting, crouching, crouchToggle, exhausted, flashlightOn = true;
 int peekSide, peekDir;               // -1 left (Q), 1 right (E), 0 not peeking; peekDir = last side, for the ease-out
 float peekAmt;                       // 0..1 how far the head is leaned out
@@ -438,6 +538,17 @@ PVector peekL, peekR;                // corners you could lean around right now 
 float flicker = 1, flickerUntil = 0;
 float stepEnv, hbPhase, breathPhase, staticBurst;
 float frameDt;
+
+// ---------------- camera-mounted light ----------------
+// 100 world units = 1 m. Compact neutral-white flashlight with a focused beam.
+final float FLASH_POWER = 1.55;
+final float FLASH_RANGE = 900;       // fades to zero at 9 m
+final float FLASH_FALLOFF = 260;     // half-strength distance, 2.6 m
+final float FLASH_INNER_COS = 0.985, FLASH_OUTER_COS = 0.866; // 10° core, 30° soft edge
+final PVector FLASH_COLOR = new PVector(1.0, 0.97, 0.92);
+PVector flashPos = new PVector(), flashDir = new PVector(1, 0, 0);
+float cameraRoll = 0, cameraRightX = 0, cameraRightY = 1; // shared camera pose
+
 int lastStep;
 int startMs, deathMs, lastMs, skipMouse, msgUntil;
 
@@ -502,14 +613,28 @@ String[] WORLD_FRAG = {
   "uniform vec3 camPos;",
   "uniform vec3 camDir;",
   "uniform vec4 mapData[" + MAP_VEC4 + "];",
+  "uniform vec4 wallData[" + WALL_VEC4 + "];",
   "uniform float gridSize;",
   "uniform float cellSize;",
   "uniform float wallH;",
+  "uniform float wallHalf;",
   "uniform float lampZ;",
   "uniform float flash;",
-  "uniform float glow;",
+  "uniform vec3 flashPos;",
+  "uniform vec3 flashDir;",
+  "uniform vec3 flashCol;",
+  "uniform float flashRange;",
+  "uniform float flashFalloff;",
+  "uniform vec2 flashCone;",
   "uniform float emissive;",
+  "uniform float wallpaper;",
+  "uniform float wetDebug;",
   "uniform float exposure;",
+  "uniform sampler2D giMap;",
+  "uniform sampler2D wallGIMap;",
+  "uniform sampler2D giDynamic;",
+  "uniform float giSize;",
+  "uniform float giWallSize;",
   "uniform float fogDist;",
   "uniform float volOn;",
   "uniform vec3 fogColor;",
@@ -518,8 +643,6 @@ String[] WORLD_FRAG = {
   "varying vec3 wPos;",
   "varying vec3 ePos;",
   "const float PI = 3.14159265;",
-
-  // 4 cells packed per float in base 17: 0 = wall, 1..16 = open with lamp brightness
   "float cellVal(vec2 c) {",
   "  if (c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize) return -1.0;",
   "  float idx = c.y * gridSize + c.x;",
@@ -535,7 +658,142 @@ String[] WORLD_FRAG = {
   "  return code < 0.5 ? -1.0 : (code - 1.0) / 15.0;",
   "}",
   "float isOpen(vec2 c) { return cellVal(c) > -0.5 ? 1.0 : 0.0; }",
-
+  "float wallCode(vec2 c) {",
+  "  if (c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize) return 0.0;",
+  "  float idx = c.y * gridSize + c.x;",
+  "  float fi = floor(idx / 8.0); float sub = mod(idx, 8.0);",
+  "  vec4 v = wallData[int(floor(fi / 4.0))]; float r = mod(fi, 4.0);",
+  "  float packed = r < 0.5 ? v.x : (r < 1.5 ? v.y : (r < 2.5 ? v.z : v.w));",
+  "  return mod(floor((packed + 0.01) / pow(4.0, sub)), 4.0);",
+  "}",
+  "// Same square-capped 1 m wall volumes as CPU collision and the welded mesh.",
+  "float wallXAt(vec2 edge) { return mod(wallCode(edge - vec2(1.0, 0.0)), 2.0); }",
+  "float wallYAt(vec2 edge) { return floor(wallCode(edge - vec2(0.0, 1.0)) / 2.0); }",
+  "",
+  "float wallBoxHit(vec3 a, vec3 b, vec2 lo, vec2 hi) {",
+  "  vec3 delta = b - a;",
+  "  vec3 safe = vec3(abs(delta.x) < 0.000001 ? 0.000001 : delta.x,",
+  "                   abs(delta.y) < 0.000001 ? 0.000001 : delta.y,",
+  "                   abs(delta.z) < 0.000001 ? 0.000001 : delta.z);",
+  "  vec3 t0 = (vec3(lo, 0.0) - a) / safe;",
+  "  vec3 t1 = (vec3(hi, wallH) - a) / safe;",
+  "  vec3 nearT = min(t0, t1), farT = max(t0, t1);",
+  "  float enter = max(0.0, max(nearT.x, max(nearT.y, nearT.z)));",
+  "  float leave = min(1.0, min(farT.x, min(farT.y, farT.z)));",
+  "  return enter <= leave + 0.0000001 ? 1.0 : 0.0;",
+  "}",
+  "",
+  "float wallsInCell(vec2 cell, vec3 a, vec3 b) {",
+  "  vec2 halfSize = vec2(wallHalf);",
+  "  for (int side = 0; side < 2; side++) {",
+  "    for (int along = -1; along <= 1; along++) {",
+  "      vec2 edge = cell + vec2(float(side), float(along));",
+  "      if (wallXAt(edge) > 0.5) {",
+  "        vec2 lo = edge * cellSize - halfSize;",
+  "        vec2 hi = (edge + vec2(0.0, 1.0)) * cellSize + halfSize;",
+  "        if (wallBoxHit(a, b, lo, hi) > 0.5) return 1.0;",
+  "      }",
+  "      edge = cell + vec2(float(along), float(side));",
+  "      if (wallYAt(edge) > 0.5) {",
+  "        vec2 lo = edge * cellSize - halfSize;",
+  "        vec2 hi = (edge + vec2(1.0, 0.0)) * cellSize + halfSize;",
+  "        if (wallBoxHit(a, b, lo, hi) > 0.5) return 1.0;",
+  "      }",
+  "    }",
+  "  }",
+  "  return 0.0;",
+  "}",
+  "",
+  "float wallVisibility(vec3 a, vec3 b) {",
+  "  vec2 cell = floor(a.xy / cellSize), endCell = floor(b.xy / cellSize);",
+  "  vec2 delta = b.xy - a.xy, direction = sign(delta);",
+  "  vec2 safe = vec2(abs(delta.x) < 0.000001 ? 0.000001 : delta.x,",
+  "                   abs(delta.y) < 0.000001 ? 0.000001 : delta.y);",
+  "  vec2 nextEdge = (cell + max(direction, vec2(0.0))) * cellSize;",
+  "  vec2 nextT = (nextEdge - a.xy) / safe;",
+  "  vec2 stride = abs(vec2(cellSize) / safe);",
+  "  if (direction.x == 0.0) nextT.x = 1.0e20;",
+  "  if (direction.y == 0.0) nextT.y = 1.0e20;",
+  "  for (int walk = 0; walk < 32; walk++) {",
+  "    if (wallsInCell(cell, a, b) > 0.5) return 0.0;",
+  "    if (all(lessThan(abs(cell - endCell), vec2(0.5)))) return 1.0;",
+  "    if (abs(nextT.x - nextT.y) < 0.000001) { cell += direction; nextT += stride; }",
+  "    else if (nextT.x < nextT.y) { cell.x += direction.x; nextT.x += stride.x; }",
+  "    else { cell.y += direction.y; nextT.y += stride.y; }",
+  "  }",
+  "  return 0.0;",
+  "}",
+  "",
+  "float wallBoxDistance(vec2 p, vec2 lo, vec2 hi) {",
+  "  return length(max(max(lo - p, p - hi), vec2(0.0)));",
+  "}",
+  "",
+  "float nearestWall(vec2 p) {",
+  "  vec2 cell = floor(p / cellSize), h = vec2(wallHalf);",
+  "  float nearest = cellSize;",
+  "  for (int side = 0; side < 2; side++) for (int along = -1; along <= 1; along++) {",
+  "    vec2 edge = cell + vec2(float(side), float(along));",
+  "    if (wallXAt(edge) > 0.5)",
+  "      nearest = min(nearest, wallBoxDistance(p, edge * cellSize - h, (edge + vec2(0.0, 1.0)) * cellSize + h));",
+  "    edge = cell + vec2(float(along), float(side));",
+  "    if (wallYAt(edge) > 0.5)",
+  "      nearest = min(nearest, wallBoxDistance(p, edge * cellSize - h, (edge + vec2(1.0, 0.0)) * cellSize + h));",
+  "  }",
+  "  return nearest;",
+  "}",
+  "",
+  "float shadowNoise(vec2 p) {",
+  "  vec3 q = fract(vec3(p.xyx) * 0.1031);",
+  "  q += dot(q, q.yzx + 33.33);",
+  "  return fract((q.x + q.y) * q.z);",
+  "}",
+  "",
+  "vec2 panelPoint(vec2 seed, vec2 stratum, vec2 halfPanel) {",
+  "  vec2 jitter = vec2(shadowNoise(seed + stratum * vec2(29.0, 71.0)), shadowNoise(seed.yx + stratum * vec2(43.0, 17.0) + 9.0));",
+  "  return (stratum + jitter - 1.0) * halfPanel;",
+  "}",
+  "",
+  "vec4 wallBoxHits4(vec2 origin, vec4 invX, vec4 invY, vec2 lo, vec2 hi) {",
+  "  vec4 tx0 = (lo.x - origin.x) * invX, tx1 = (hi.x - origin.x) * invX;",
+  "  vec4 ty0 = (lo.y - origin.y) * invY, ty1 = (hi.y - origin.y) * invY;",
+  "  vec4 enter = max(vec4(0.0), max(min(tx0, tx1), min(ty0, ty1)));",
+  "  vec4 leave = min(vec4(1.0), min(max(tx0, tx1), max(ty0, ty1)));",
+  "  return step(enter, leave + vec4(0.0000001));",
+  "}",
+  "",
+  "vec4 lampTransmission(vec3 receiver, vec3 lightPosition) {",
+  "  vec2 halfPanel = vec2(1.0 / 12.0) * cellSize;",
+  "  vec2 seed = floor(receiver.xy * 0.5) + lightPosition.xy * 0.017;",
+  "  vec2 p0 = lightPosition.xy + panelPoint(seed, vec2(0.0, 0.0), halfPanel);",
+  "  vec2 p1 = lightPosition.xy + panelPoint(seed, vec2(1.0, 0.0), halfPanel);",
+  "  vec2 p2 = lightPosition.xy + panelPoint(seed, vec2(0.0, 1.0), halfPanel);",
+  "  vec2 p3 = lightPosition.xy + panelPoint(seed, vec2(1.0, 1.0), halfPanel);",
+  "  vec2 first = floor(receiver.xy / cellSize), last = floor(lightPosition.xy / cellSize);",
+  "  // The nine local lamps are in this cell or its immediate neighbours.",
+  "  // All walls reach the ceiling, so the four shadow rays share one XY search.",
+  "  if (any(greaterThan(abs(first - last), vec2(1.0))) || receiver.z < 0.0 || receiver.z > wallH) {",
+  "    return vec4(wallVisibility(receiver, vec3(p0, lightPosition.z)), wallVisibility(receiver, vec3(p1, lightPosition.z)),",
+  "                 wallVisibility(receiver, vec3(p2, lightPosition.z)), wallVisibility(receiver, vec3(p3, lightPosition.z)));",
+  "  }",
+  "  vec4 dx = vec4(p0.x, p1.x, p2.x, p3.x) - receiver.x;",
+  "  vec4 dy = vec4(p0.y, p1.y, p2.y, p3.y) - receiver.y;",
+  "  vec4 invX = 1.0 / mix(vec4(0.000001), dx, step(vec4(0.000001), abs(dx)));",
+  "  vec4 invY = 1.0 / mix(vec4(0.000001), dy, step(vec4(0.000001), abs(dy)));",
+  "  vec2 low = min(first, last), high = max(first, last), h = vec2(wallHalf);",
+  "  vec4 visible = vec4(1.0);",
+  "  for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++) for (int along = -1; along <= 2; along++) {",
+  "    vec2 edge = low + vec2(float(edgeIndex), float(along));",
+  "    if (edge.x <= high.x + 1.0 && edge.y <= high.y + 1.0 && wallXAt(edge) > 0.5)",
+  "      visible *= 1.0 - wallBoxHits4(receiver.xy, invX, invY, edge * cellSize - h, (edge + vec2(0.0, 1.0)) * cellSize + h);",
+  "    edge = low + vec2(float(along), float(edgeIndex));",
+  "    if (edge.y <= high.y + 1.0 && edge.x <= high.x + 1.0 && wallYAt(edge) > 0.5)",
+  "      visible *= 1.0 - wallBoxHits4(receiver.xy, invX, invY, edge * cellSize - h, (edge + vec2(1.0, 0.0)) * cellSize + h);",
+  "    if (dot(visible, vec4(1.0)) < 0.5) return vec4(0.0);",
+  "  }",
+  "  return visible;",
+  "}",
+  "float lampVisibility(vec3 a, vec3 b) { return dot(lampTransmission(a,b),vec4(0.25)); }",
+  "",
   "float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
   "float vnoise(vec2 p) {",
   "  vec2 i = floor(p);",
@@ -544,9 +802,18 @@ String[] WORLD_FRAG = {
   "  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);",
   "}",
   "float fbm(vec2 p) { return (vnoise(p) * 0.5 + vnoise(p * 2.03) * 0.25 + vnoise(p * 4.01) * 0.125) / 0.875; }",
+  "float cameraLightProfile(vec3 d) {",
+  "  // Smooth flood across the view: no hot spot, reflector ring or sharp disc.",
+  "  return smoothstep(flashCone.x, flashCone.y, dot(d, flashDir));",
+  "}",
+  "float cameraLightAttenuation(float d) {",
+  "  float fade = 1.0 - smoothstep(flashRange * 0.5, flashRange, d);",
+  "  return fade / (1.0 + d * d / (flashFalloff * flashFalloff));",
+  "}",
+  // PROCEDURAL WET-PATCH MASK: world-space scale 260, onset 0.60, full wetness 0.72.
+  "float wetPatchMask(vec2 p) { return smoothstep(0.66, 0.76, fbm(p / 260.0 + 3.7)); }",
   "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }",
   "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }",
-
   "vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 Ls, vec3 albedo, float rough, float f0) {",
   "  float NdL = max(dot(N, L), 0.0);",
   "  float NdLs = max(dot(N, Ls), 0.0);",
@@ -565,7 +832,30 @@ String[] WORLD_FRAG = {
   "  float spec = min(D * G * F / (4.0 * NdV * max(NdLs, 0.001)), 3.0);",
   "  return albedo * (1.0 - F) / PI * NdL + vec3(spec * NdLs);",
   "}",
-
+  "",
+  "vec3 decodeBounce(vec3 c) { return 0.25*c/max(vec3(1.0)-c,vec3(0.02)); }",
+  "vec3 surfaceBounce(vec3 p, vec3 n, bool architectural) {",
+  "  vec2 uv = clamp(p.xy/(gridSize*cellSize),vec2(0.5/giSize),vec2(1.0-0.5/giSize));",
+  "  vec3 result;",
+  "  if (architectural && abs(n.z)<0.5) {",
+  "    float face=abs(n.x)>0.5?(n.x>0.0?0.0:1.0):(n.y>0.0?2.0:3.0);",
+  "    float unit=gridSize*cellSize/giWallSize;",
+  "    float plane=floor((abs(n.x)>0.5?p.x:p.y)/unit+0.5);",
+  "    float along=clamp((abs(n.x)>0.5?p.y:p.x)/unit,0.5,giWallSize-0.5);",
+  "    float h=clamp(p.z/wallH*3.0-0.5,0.0,2.0);",
+  "    float u=(face*(giWallSize+1.0)+plane+0.5)/(4.0*(giWallSize+1.0));",
+  "    vec3 c0=decodeBounce(texture2D(wallGIMap,vec2(u,along/(giWallSize*3.0)),-16.0).rgb);",
+  "    vec3 c1=decodeBounce(texture2D(wallGIMap,vec2(u,(giWallSize+along)/(giWallSize*3.0)),-16.0).rgb);",
+  "    vec3 c2=decodeBounce(texture2D(wallGIMap,vec2(u,(2.0*giWallSize+along)/(giWallSize*3.0)),-16.0).rgb);",
+  "    result=mix(mix(c0,c1,min(h,1.0)),c2,max(h-1.0,0.0));",
+  "  } else {",
+  "    vec3 floorLight=decodeBounce(texture2D(giMap,vec2(uv.x,uv.y*0.5),-16.0).rgb);",
+  "    vec3 ceilLight=decodeBounce(texture2D(giMap,vec2(uv.x,0.5+uv.y*0.5),-16.0).rgb);",
+  "    result=architectural?(n.z>0.0?floorLight:ceilLight):mix(floorLight,ceilLight,clamp(p.z/wallH,0.0,1.0));",
+  "  }",
+  "  return result*texture2D(giDynamic,uv).r;",
+  "}",
+  "",
   "void main() {",
   "  vec4 tex = texture2D(texture, vertTexCoord.st) * vertColor;",
   "  if (tex.a < 0.35) discard;",
@@ -581,34 +871,59 @@ String[] WORLD_FRAG = {
   "    else if (an.x >= an.y) gn = vec3(sign(gn.x), 0.0, 0.0);",
   "    else gn = vec3(0.0, sign(gn.y), 0.0);",
   "  }",
-
   "  vec3 albedo = pow(tex.rgb, vec3(2.2));",
   "  float rough = 0.65;",
   "  float f0 = 0.04;",
   "  float bump = 0.0;",
-  "  if (isLevel) {",
+  "  float wet = 0.0;",
+  "  if (isLevel && wallpaper > 0.5) {",
   "    if (gn.z > 0.5) {",
-  "      float wet = smoothstep(0.60, 0.72, fbm(wPos.xy / 260.0 + 3.7));",
-  "      albedo *= (0.85 + 0.3 * fbm(wPos.xy / 700.0)) * mix(1.0, 0.65, wet);",
-  "      rough = mix(0.95, 0.42, wet);",
-  "      f0 = mix(0.03, 0.05, wet);",
-  "      bump = mix(1.4, 0.4, wet);",
+  "      float fiber = clamp(lum(tex.rgb) / 0.62, 0.6, 1.4);",
+  "      float wear = 0.84 + 0.28 * fbm(wPos.xy / 80.0);",
+  "      float mott = fbm(wPos.xy / 140.0);",
+  "      albedo = vec3(0.13, 0.105, 0.065) * fiber * wear * (0.85 + 0.3 * mott);",
+  "      wet = wetPatchMask(wPos.xy);",
+  "      albedo *= mix(1.0, 0.62, wet);",
+  "      albedo = mix(albedo, vec3(lum(albedo)), 0.25 * wet);",   // damp fibers lose a little colour
+  "      rough = mix(0.98, 0.72, wet);",                          // was 0.42: matted, not glossy
+  "      f0 = mix(0.012, 0.022, wet);",                           // was 0.05
+  "      bump = mix(0.16, 0.06, wet);",
   "    } else if (gn.z < -0.5) {",
-  "      float s = fbm(wPos.xy / 320.0 + 11.0);",
-  "      float ring = smoothstep(0.64, 0.68, s) - smoothstep(0.69, 0.73, s);",
-  "      albedo *= mix(vec3(1.0), vec3(0.78, 0.66, 0.48), smoothstep(0.64, 0.74, s) * 0.45 + ring * 0.5);",
+  "      vec3 tileAvg = pow(texture2D(texture, vertTexCoord.st, 8.0).rgb,vec3(2.2));",
+  "      albedo = mix(tileAvg,albedo,0.35);",
+  "      albedo *= (0.6 / max(lum(tileAvg),0.05)) * vec3(1.0,1.0,0.98);",
+  // wet patches now also have a leak on the ceiling
+  "      float s = fbm(wPos.xy / 260.0 + 3.7);",          // same field as wetPatchMask
+  "      float stain = smoothstep(0.70, 0.80, s);",
+  "      float ring = smoothstep(0.70, 0.72, s) - smoothstep(0.73, 0.75, s);",
+  "      albedo *= mix(vec3(1.0), vec3(0.78, 0.66, 0.48), stain * 0.22 + ring * 0.35);",
+  "      vec2 tileP = mod(wPos.xy + cellSize / 12.0, vec2(cellSize / 6.0));",
+  "      vec2 tileEdge = min(tileP, vec2(cellSize / 6.0) - tileP);",
+  "      float gridAA = max(max(fwidth(wPos.x), fwidth(wPos.y)), 0.5);",
+  "      float ceilingGrid = 1.0 - smoothstep(0.35, 0.35 + gridAA, min(tileEdge.x, tileEdge.y));",
+  "      albedo *= mix(1.0, 0.76, ceilingGrid);",
   "      rough = 0.9;",
-  "      bump = 0.9;",
+  "      bump = 0.1;",
   "    } else {",
+  "      vec3 paperAvg = pow(texture2D(texture, vertTexCoord.st, 8.0).rgb,vec3(2.2));",
+  "      albedo = mix(paperAvg,albedo,0.45);",
+  "      albedo *= 0.42 / max(lum(paperAvg),0.05);",
   "      vec2 t2 = vec2(gn.y, -gn.x);",
   "      float along = dot(wPos.xy, t2);",
-  "      float grime = 1.0 - smoothstep(0.0, 140.0, wPos.z);",
+  "      float paperLuma = lum(albedo);",
+  "      albedo = mix(vec3(paperLuma), albedo, 0.18) * vec3(1.08, 1.02, 0.72);",
+  "      float paper = vnoise(vec2(along, wPos.z) * 0.18);",
+  "      albedo *= 0.97 + 0.05 * paper;",
+  "      float grime = 1.0 - smoothstep(0.0, 100.0, wPos.z);",
   "      albedo *= (0.88 + 0.24 * fbm(vec2(along, wPos.z) / 600.0)) * (1.0 - 0.22 * grime);",
-  "      rough = 0.75;",
-  "      bump = 0.7;",
+  "      rough = 0.92;",
+  "      bump = 0.12;",
+  // baseboards: disabled because the backrooms dont have them
+  // "      float bb = 1.0 - smoothstep(10.0, 12.0, wPos.z);",
+  // "      albedo = mix(albedo, vec3(0.028, 0.021, 0.012), bb);",
+  // "      rough = mix(rough, 0.55, bb);",
   "    }",
   "  }",
-
   "  vec3 n = gn;",
   "  float bumpFade = 1.0 - smoothstep(350.0, 1100.0, dist);",
   "  if (bump > 0.0 && bumpFade > 0.0) {",
@@ -616,6 +931,9 @@ String[] WORLD_FRAG = {
   "    float h0 = lum(texture2D(texture, uv, 1.0).rgb);",
   "    float hx = lum(texture2D(texture, uv + vec2(texOffset.x * 2.0, 0.0), 1.0).rgb);",
   "    float hy = lum(texture2D(texture, uv + vec2(0.0, texOffset.y * 2.0), 1.0).rgb);",
+  "    if (isLevel && abs(gn.z)<0.5) {",
+  "      h0=0.0; hx=0.015*(vnoise(wPos.xy*0.7+wPos.z)-0.5); hy=0.015*(vnoise(wPos.yx*0.8-wPos.z)-0.5);",
+  "    }",
   "    vec3 dp1 = dFdx(wPos);",
   "    vec3 dp2 = dFdy(wPos);",
   "    vec2 duv1 = dFdx(uv);",
@@ -629,17 +947,15 @@ String[] WORLD_FRAG = {
   "    vec3 nts = normalize(vec3((h0 - hx) * s, (h0 - hy) * s, 1.0));",
   "    n = normalize(T * im * nts.x + B * im * nts.y + gn * nts.z);",
   "  }",
-
-  "  vec3 lampCol = vec3(1.0, 0.92, 0.72);",
+  "  vec3 lampCol = vec3(1.0, 0.98, 0.80);",
   "  vec3 direct = vec3(0.0);",
   "  float irr = 0.0;",
-  "  vec2 toCam = camPos.xy - wPos.xy;",
-  "  vec2 a = wPos.xy + gn.xy * 4.0 + toCam / max(length(toCam), 1.0) * 3.0;",
+  "  vec2 a = wPos.xy + gn.xy * 2.0;",
   "  vec2 cc = floor(a / cellSize);",
   "  float hr = cellSize * 1.5;",
   "  vec3 R = reflect(-Vn, n);",
   "  float ptZ = wallH - 6.0;",
-  "  vec2 panelHalf = vec2(cellSize * 0.28, cellSize * 0.14);",
+  "  vec2 panelHalf = vec2(cellSize / 12.0);",
   "  for (int j = -1; j <= 1; j++) {",
   "    for (int i = -1; i <= 1; i++) {",
   "      vec2 d = vec2(float(i), float(j));",
@@ -649,15 +965,14 @@ String[] WORLD_FRAG = {
   "      vec2 b = (c + 0.5) * cellSize;",
   "      float hd = length(b - wPos.xy);",
   "      if (hd >= hr) continue;",
-  "      float vis = 1.0;",
-  "      if (i != 0 && j != 0) {",
-  "        vec2 K = (cc + 0.5 + 0.5 * d) * cellSize;",
-  "        vec2 dir = b - a;",
-  "        float side = (dir.x * (K.y - a.y) - dir.y * (K.x - a.x)) / max(length(dir), 1.0) * d.x * d.y;",
-  "        float pen = 40.0 + 0.5 * length(K - a);",
-  "        vis = mix(isOpen(cc + vec2(0.0, d.y)), isOpen(cc + vec2(d.x, 0.0)), smoothstep(-pen, pen, side));",
-  "        vis = max(vis, 0.12);",
-  "        if (vis <= 0.0) continue;",
+  "      vec3 receiver=vec3(a,wPos.z+gn.z*2.0);",
+  "      vec4 visibility=lampTransmission(receiver,vec3(b,lampZ));",
+  "      float vis=dot(visibility,vec4(0.25));",
+  "      if (vis <= 0.0) continue;",
+  "      if (gn.z < -0.5) {",
+  "        float pd=length(max(abs(wPos.xy-b)-panelHalf,vec2(0.0)));",
+  "        direct+=albedo*lampCol*(p*0.9*exp(-pd/60.0)*vis);",
+  "        continue;",
   "      }",
   "      vec3 Lp = vec3(b, lampZ) - wPos;",
   "      float dl = length(Lp);",
@@ -669,57 +984,49 @@ String[] WORLD_FRAG = {
   "        vec2 hit = wPos.xy + R.xy * ((ptZ - wPos.z) / R.z);",
   "        Ls = normalize(vec3(clamp(hit, b - panelHalf, b + panelHalf), ptZ) - wPos);",
   "      }",
-  "      direct += brdf(n, Vn, L, Ls, albedo, rough, f0) * lampCol * (1.15 * PI * p * att * vis);",
+  "      vec2 seed=floor(receiver.xy*0.5)+b*0.017;",
+  "      vec2 p0=b+panelPoint(seed,vec2(0.0,0.0),panelHalf), p1=b+panelPoint(seed,vec2(1.0,0.0),panelHalf);",
+  "      vec2 p2=b+panelPoint(seed,vec2(0.0,1.0),panelHalf), p3=b+panelPoint(seed,vec2(1.0,1.0),panelHalf);",
+  "      vec4 ax=vec4(p0.x,p1.x,p2.x,p3.x)-wPos.x, ay=vec4(p0.y,p1.y,p2.y,p3.y)-wPos.y;",
+  "      float az=lampZ-wPos.z;",
+  "      vec4 d2=ax*ax+ay*ay+az*az, inv=inversesqrt(max(d2,vec4(1.0)));",
+  "      vec4 ndl=max((n.x*ax+n.y*ay+n.z*az)*inv,vec4(0.0));",
+  "      vec4 sourceCos=max(az*inv,vec4(0.0));",
+  "      vec4 horizontal=sqrt(ax*ax+ay*ay)/hr, fade=max(vec4(0.0),1.0-pow(horizontal,vec4(4.0)));",
+  "      vec4 areaAtt=fade*fade/(1.0+d2/(cellSize*cellSize*0.9));",
+  "      float areaEnergy=dot(ndl*sourceCos*areaAtt*visibility,vec4(0.25));",
+  "      direct+=albedo*lampCol*(1.15*0.96*p*areaEnergy);",
+  "      direct+=brdf(n,Vn,L,Ls,vec3(0.0),rough,f0)*lampCol*(1.15*PI*p*att*vis);",
   "      irr += p * att * vis;",
   "    }",
   "  }",
-
-  "  vec3 bounceCol = vec3(0.95, 0.78, 0.52);",
-  "  vec3 ambient = albedo * irr * bounceCol * (0.08 + 0.2 * max(-n.z, 0.0) + 0.06 * (1.0 - abs(n.z)));",
-  "  ambient += albedo * vec3(0.006, 0.0055, 0.0045);",
-
-  "  float ndv = max(dot(n, Vn), 0.0);",
-  "  float eDist = length(ePos);",
-  "  vec3 eDir = ePos / max(eDist, 0.001);",
-  "  float cosA = -eDir.z;",
-  "  float beam = smoothstep(0.78, 0.97, cosA);",
-  "  float fall = 1.0 / (1.0 + eDist * eDist / 2000000.0);",
-  "  vec3 flDiff = albedo / PI * ndv;",
-  "  direct += flDiff * vec3(0.85, 0.92, 1.0) * (PI * flash * 1.2 * beam * fall * mix(1.0, 1.8, 1.0 - ndv));",
-  "  direct += flDiff * vec3(1.0, 0.95, 0.85) * (PI * glow / (1.0 + dist * dist / 122500.0));",
-
+  "  vec3 ambient=albedo*surfaceBounce(wPos,gn,isLevel);",
+  "",
+  "  vec3 receiver = vec3(a, wPos.z + gn.z * 2.0);",
+  "  vec3 Lf = flashPos - wPos;",
+  "  float df = length(Lf);",
+  "  vec3 Lfn = Lf / max(df, 0.001);",
+  "  float prof = flash > 0.0001 && df < flashRange ? cameraLightProfile(-Lfn) : 0.0;",
+  "  if (prof > 0.002) {",
+  "    float shadow = wallVisibility(receiver, flashPos);",
+  "    float atten = cameraLightAttenuation(df);",
+  "    direct += brdf(n, Vn, Lfn, Lfn, albedo, rough, f0) * flashCol * (PI * flash * prof * atten * shadow);",
+  "  }",
   "  float ao = 1.0;",
   "  if (isLevel) {",
-  "    vec2 f = wPos.xy - cc * cellSize;",
   "    if (abs(gn.z) > 0.5) {",
-  "      float m = cellSize;",
-  "      if (isOpen(cc + vec2(-1.0, 0.0)) < 0.5) m = min(m, f.x);",
-  "      if (isOpen(cc + vec2( 1.0, 0.0)) < 0.5) m = min(m, cellSize - f.x);",
-  "      if (isOpen(cc + vec2(0.0, -1.0)) < 0.5) m = min(m, f.y);",
-  "      if (isOpen(cc + vec2(0.0,  1.0)) < 0.5) m = min(m, cellSize - f.y);",
-  "      if (isOpen(cc + vec2(-1.0, -1.0)) < 0.5) m = min(m, length(f));",
-  "      if (isOpen(cc + vec2( 1.0, -1.0)) < 0.5) m = min(m, length(vec2(cellSize - f.x, f.y)));",
-  "      if (isOpen(cc + vec2(-1.0,  1.0)) < 0.5) m = min(m, length(vec2(f.x, cellSize - f.y)));",
-  "      if (isOpen(cc + vec2( 1.0,  1.0)) < 0.5) m = min(m, length(vec2(cellSize) - f));",
-  "      ao = mix(0.4, 1.0, smoothstep(0.0, 130.0, m));",
+  "      float distanceToWall = nearestWall(wPos.xy);",
+  "      ao = mix(0.78, 1.0, smoothstep(0.0, 18.0, distanceToWall));",
   "    } else {",
-  "      ao = mix(0.45, 1.0, smoothstep(0.0, 100.0, wPos.z)) * mix(0.55, 1.0, smoothstep(0.0, 80.0, wallH - wPos.z));",
-  "      float m = cellSize;",
-  "      if (abs(gn.x) > 0.5) {",
-  "        if (isOpen(cc + vec2(0.0, -1.0)) < 0.5) m = min(m, f.y);",
-  "        if (isOpen(cc + vec2(0.0,  1.0)) < 0.5) m = min(m, cellSize - f.y);",
-  "      } else {",
-  "        if (isOpen(cc + vec2(-1.0, 0.0)) < 0.5) m = min(m, f.x);",
-  "        if (isOpen(cc + vec2( 1.0, 0.0)) < 0.5) m = min(m, cellSize - f.x);",
-  "      }",
-  "      ao *= mix(0.55, 1.0, smoothstep(0.0, 120.0, m));",
+  "      ao = mix(0.78, 1.0, smoothstep(0.0, 16.0, wPos.z)) * mix(0.84, 1.0, smoothstep(0.0, 12.0, wallH - wPos.z));",
+  "      float cornerClearance = nearestWall(wPos.xy + gn.xy * 14.0);",
+  "      ao *= mix(0.86, 1.0, smoothstep(0.0, 12.0, cornerClearance));",
   "    }",
   "  }",
-
-  "  vec3 col = direct * mix(1.0, ao, 0.6) + ambient * ao + albedo * emissive * 1.6;",
+  "  vec3 col = direct * mix(1.0, ao, 0.15) + ambient * ao + albedo * emissive * 1.6;",
+  "  col = mix(col, vec3(0.02, 0.8, 1.0), wet * wetDebug);",
   "  float fog = 1.0 - exp(-pow(dist / fogDist, 1.5));",
   "  col = mix(col, fogColor, fog);",
-
   "  if (volOn > 0.5) {",
   "    float scat = 0.0;",
   "    float rayLen = min(dist, 2600.0);",
@@ -731,12 +1038,12 @@ String[] WORLD_FRAG = {
   "      float lp = cellVal(sc);",
   "      if (lp <= 0.01) continue;",
   "      vec3 dlp = vec3((sc + 0.5) * cellSize, lampZ) - sp;",
-  "      scat += lp / (1.0 + dot(dlp, dlp) / 48400.0);",
+  "      float visibility = wallVisibility(sp, sp + dlp);",
+  "      scat += visibility * lp / (1.0 + dot(dlp, dlp) / 48400.0);",
   "    }",
-  "    col += lampCol * scat * rayLen / 10.0 * 0.0002;",
+  "    col += lampCol * scat * rayLen / 10.0 * 0.00008;",
   "  }",
-
-  "  col = aces(col * exposure);",
+  "  col = 1.0 - exp(-col * exposure * 1.6);",
   "  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);",
   "}"
 };
@@ -780,11 +1087,11 @@ String[] LENS_FRAG = {
   "  float edge = 1.0 + fisheye * 0.25 * (aspect * aspect + 1.0);",
   "  vec2 uv = 0.5 + c0 * (1.0 + fisheye * r2) / edge;",
   "  float t = fract(time * 7.31) * 91.7;",
-  "  float ang = rnd(gl_FragCoord.xy * 0.37 + t) * 6.28318;",
+
   "  float rad = soft * (0.6 + 1.6 * r2);",                                   // softer toward the edges
-  "  vec2 j = vec2(cos(ang), sin(ang)) * texOffset * rad;",
+  "  vec2 j = texOffset * vec2(rad, max(rad, 0.75));",
   "  vec2 lo = texOffset, hi = vec2(1.0) - texOffset;",
-  "  vec3 col = texture2D(texture, clamp(uv + j, lo, hi)).rgb * 0.55 + texture2D(texture, uv).rgb * 0.45;",
+  "  vec3 col = (texture2D(texture, clamp(uv + j, lo, hi)).rgb + texture2D(texture, clamp(uv - j, lo, hi)).rgb) * 0.275 + texture2D(texture, uv).rgb * 0.45;",
   "  vec3 b = texture2D(texture, clamp(uv + texOffset * vec2( 0.8,  0.8), lo, hi)).rgb",
   "         + texture2D(texture, clamp(uv + texOffset * vec2(-0.8,  0.8), lo, hi)).rgb",
   "         + texture2D(texture, clamp(uv + texOffset * vec2( 0.8, -0.8), lo, hi)).rgb",
@@ -810,6 +1117,7 @@ String[] POST_FRAG = {
   "uniform float hit;",
   "uniform float gain;",
   "uniform float vhs;",
+  "uniform float footage;",
   "uniform float fisheye;",
   "uniform float aspect;",
   "varying vec4 vertColor;",
@@ -831,9 +1139,6 @@ String[] POST_FRAG = {
   "  col.r = texture2D(texture, uv + dir * ab).r;",
   "  col.g = texture2D(texture, uv).g;",
   "  col.b = texture2D(texture, uv - dir * ab).b;",
-  "  vec3 nb = (texture2D(texture, uv + vec2(texOffset.x, 0.0)).rgb + texture2D(texture, uv - vec2(texOffset.x, 0.0)).rgb",
-  "           + texture2D(texture, uv + vec2(0.0, texOffset.y)).rgb + texture2D(texture, uv - vec2(0.0, texOffset.y)).rgb) * 0.25;",
-  "  col += (col - nb) * 0.15;",
   "  vec3 bloom = vec3(0.0);",
   "  for (int k = 0; k < 16; k++) {",
   "    float a = float(k) * 2.39996;",
@@ -843,10 +1148,10 @@ String[] POST_FRAG = {
   "    bloom += s * smoothstep(0.88, 1.0, l) / (1.0 + float(k) * 0.12);",
   "  }",
   "  bloom /= 9.0;",
-  "  col += bloom * vec3(1.0, 0.92, 0.8) * 0.35 + bloom * vec3(0.2, 0.03, 0.0) * 0.25;",
+  "  col += bloom * vec3(0.98, 1.0, 0.88) * mix(0.35, 0.20, footage) + bloom * vec3(0.2, 0.03, 0.0) * mix(0.25, 0.05, footage);",
   "  float luma = dot(col, vec3(0.299, 0.587, 0.114));",
-  "  col = mix(vec3(luma), col, 0.92 - 0.4 * danger);",
-  "  col *= vec3(1.02, 1.0, 0.92);",
+  "  col = mix(vec3(luma), col,(mix(0.92, 1.0, footage) - 0.4 * danger) * 1.70);",
+  "  col *= mix(vec3(1.02, 1.0, 0.92), vec3(1.05, 1.02, 0.84), footage);",
   "  col = mix(col, vec3(luma * 1.2, luma * 0.35, luma * 0.3), 0.35 * hit + 0.15 * danger * danger);",
   "  col = clamp(col, 0.0, 1.0);",
   "  col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);",
@@ -856,7 +1161,7 @@ String[] POST_FRAG = {
   "  float n2 = rnd(uv * 417.0 - time * 1.3) - 0.5;",
   "  col += vec3(n1, (n1 + n2) * 0.5, n2) * (0.012 + 0.03 * gain) * (1.0 - luma) + n1 * 0.06 * danger;",
   "  float v = 1.0 - smoothstep(0.35, 1.05, length(dir * vec2(1.2, 1.0)) + 0.15 * danger);",
-  "  col *= mix(0.4, 1.0, v);",
+  "  col *= mix(0.78, 1.0, v);",
   "  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);",
   "}"
 };
@@ -877,12 +1182,12 @@ void setup() {
   minim = new Minim(this);
   ambience = minim.loadFile("ambiente.mp3");
   ambience.loop();
+  setupSynth();
   for (int k = 0; k < NAMES.length; k++) {
     String n = NAMES[k].toLowerCase();
     faces[k]  = loadImage(n + ".jpg");
-    voices[k] = minim.loadFile(n + ".mp3");
+    voices[k] = new Voice3D(n + ".mp3");
   }
-  setupSynth();
 
   if (new File(dataPath("flashlight.mp3")).exists()) {
     flashSnd = minim.loadSample("flashlight.mp3", 512);
@@ -905,6 +1210,7 @@ void setup() {
   world = new PShader(this, WORLD_VERT, WORLD_FRAG);
   post  = new PShader(this, POST_VERT, POST_FRAG);
   lens  = new PShader(this, POST_VERT, LENS_FRAG);
+  tape  = new PShader(this, POST_VERT, TAPE_FRAG);
 
   panelTex  = makePanel();
   outletTex = makeOutlet();
@@ -921,10 +1227,72 @@ void setup() {
   arrowTex = makeArrow();
   pucprBg = loadPucpr();
   initModels();
+  for (int k = 0; k < packEyes.length; k++) packEyes[k] = new Eye();
 
   loadSaves();
   pwSel = unlockedDays() - 1;
   lastMs = millis();
+}
+
+// Compute the actual camera once before AI/interactions. The lamp is attached to this pose.
+void updateCameraLight(float dt) {
+  float pulse = kickEnv * chaseLvl;
+  float dgV = max(danger(threatD), chaseLvl * 0.4);
+  float ht = millis() * 0.0004;
+  float yawR = yaw + (noise(ht, 3.1) - 0.5) * 0.014 * HANDHELD;
+  float pitchR = pitch + (noise(ht, 7.7) - 0.5) * 0.010 * HANDHELD;
+
+  float fx = cos(yawR), fy = sin(yawR), rx = -fy, ry = fx;
+  float shake = sq(dgV) * 6 + pulse * 5;
+  float sway = cos(bobPhase) * (crouching ? 2 : 4);
+  float ex = player.x + rx * sway + random(-shake, shake);
+  float ey = player.y + ry * sway + random(-shake, shake);
+  float ez = eyeH - abs(sin(bobPhase)) * (crouching ? 3 : 7);
+  float peekE = peekAmt * peekAmt * (3 - 2 * peekAmt);
+  // the torso tilts at the hips: the head swings out on an arc and drops a little
+  float arm = leanArm(), side = peekOff.mag();
+  float tilt = asin(constrain(side / arm, 0, 1)) * peekE;
+  if (side > 0) {
+    ex += peekOff.x / side * arm * sin(tilt);
+    ey += peekOff.y / side * arm * sin(tilt);
+    ez -= arm * (1 - cos(tilt));
+  }
+  float rollR = roll - peekDir * PEEK_ROLL * tilt / PEEK_ANGLE;   // roll > 0 tilts the head left
+  camX = ex; camY = ey; camZ = ez;
+  camDX = cos(yawR) * cos(pitchR); camDY = sin(yawR) * cos(pitchR); camDZ = sin(pitchR);
+  cameraRoll = rollR;
+  cameraRightX = rx; cameraRightY = ry;
+  updateFlashlight(dt, camX, camY, camZ, camDX, camDY, camDZ);
+}
+
+void updateFlashlight(float dt, float ex, float ey, float ez, float lx, float ly, float lz) {
+  // No interpolation or extra sway: position and direction are exactly the camera's.
+  flashPos.set(ex, ey, ez);
+  flashDir.set(lx, ly, lz).normalize();
+}
+
+float flashlightStrength() { return flashlightOn ? flicker : 0; }
+
+// CPU equivalent of the flood profile, used for illumination-aware interactions.
+float cameraLightIntensityAt(float x, float y, float z) {
+  float dx = x - flashPos.x, dy = y - flashPos.y, dz = z - flashPos.z;
+  float d = sqrt(dx * dx + dy * dy + dz * dz);
+  float strength = flashlightStrength();
+  if (strength <= 0 || d >= FLASH_RANGE) return 0;
+  float cosine = d > 0.001 ? (dx * flashDir.x + dy * flashDir.y + dz * flashDir.z) / d : 1;
+  float cone = constrain((cosine - FLASH_OUTER_COS) / (FLASH_INNER_COS - FLASH_OUTER_COS), 0, 1);
+  cone = cone * cone * (3 - 2 * cone);
+  float fade = constrain((d - FLASH_RANGE * 0.5) / (FLASH_RANGE * 0.5), 0, 1);
+  fade = 1 - fade * fade * (3 - 2 * fade);
+  return FLASH_POWER * strength * cone * fade / (1 + sq(d / FLASH_FALLOFF));
+}
+
+boolean flashlightAimsAt(float x, float y, float z, float cosine) {
+  if (cameraLightIntensityAt(x, y, z) < 0.025) return false;
+  PVector targetDelta = new PVector(x - flashPos.x, y - flashPos.y, z - flashPos.z);
+  float d = targetDelta.mag();
+  return d > 0.001 && targetDelta.dot(flashDir) > cosine * d
+    && lineOfSight(flashPos.x, flashPos.y, x, y);
 }
 
 void flashClick() {
@@ -961,44 +1329,74 @@ void draw() {
 // AUDIO
 void setupSynth() {
   out = minim.getLineOut();
+  initAudioBuses();
+  fxBus.patch(out);
+  voiceBus.patch(out);
+  buildSynthGraph();
+}
+
+void buildSynthGraph() {
   hum  = new Oscil(120, 0, Waves.SINE);
   hum2 = new Oscil(240, 0, Waves.TRIANGLE);
   heart = new Oscil(52, 0, Waves.SINE);
-  hum.patch(out);
-  hum2.patch(out);
-  heart.patch(out);
+  hum.patch(fxMix);
+  hum2.patch(fxMix);
+  heart.patch(fxMix);
 
   stepAmp = new Multiplier(0);
-  new Noise(1, Noise.Tint.BROWN).patch(new MoogFilter(280, 0.25)).patch(stepAmp).patch(out);
+  new Noise(1, Noise.Tint.BROWN).patch(new MoogFilter(280, 0.25)).patch(stepAmp).patch(fxMix);
   breathAmp = new Multiplier(0);
-  new Noise(1, Noise.Tint.PINK).patch(new MoogFilter(1400, 0.15)).patch(breathAmp).patch(out);
+  new Noise(1, Noise.Tint.PINK).patch(new MoogFilter(1400, 0.15)).patch(breathAmp).patch(fxMix);
   staticAmp = new Multiplier(0);
-  new Noise(1, Noise.Tint.WHITE).patch(staticAmp).patch(out);
+  new Noise(1, Noise.Tint.WHITE).patch(staticAmp).patch(fxMix);
 
   MoogFilter stingLP = new MoogFilter(2200, 0.3);
+  Summer stingMix = new Summer();
+  stingMix.patch(stingLP);
   for (int k = 0; k < 3; k++) {
     sting[k] = new Oscil(STING_F[k], 0, Waves.SAW);
-    sting[k].patch(stingLP);
+    sting[k].patch(stingMix);
   }
-  stingLP.patch(out);
+  stingLP.patch(fxMix);
   boom = new Oscil(48, 0, Waves.SINE);
-  boom.patch(out);
+  boom.patch(fxMix);
   screech = new Oscil(1800, 0, Waves.TRIANGLE);
-  screech.patch(out);
+  screech.patch(fxMix);
 
   droneLP = new MoogFilter(300, 0.5);
   drone1 = new Oscil(55, 0, Waves.SAW);
   drone2 = new Oscil(55.7, 0, Waves.SAW);
-  drone1.patch(droneLP);
-  drone2.patch(droneLP);
-  droneLP.patch(out);
+  Summer droneMix = new Summer();
+  droneMix.patch(droneLP);
+  drone1.patch(droneMix);
+  drone2.patch(droneMix);
+  droneLP.patch(fxMix);
   kick = new Oscil(60, 0, Waves.SINE);
-  kick.patch(out);
+  kick.patch(fxMix);
   tickAmp = new Multiplier(0);
-  new Noise(1, Noise.Tint.WHITE).patch(new MoogFilter(7000, 0.1)).patch(tickAmp).patch(out);
+  new Noise(1, Noise.Tint.WHITE).patch(new MoogFilter(7000, 0.1)).patch(tickAmp).patch(fxMix);
 
   achOsc = new Oscil(784, 0, Waves.TRIANGLE);
-  achOsc.patch(out);
+  achOsc.patch(fxMix);
+
+  // footstep echo: wetter and longer in open halls
+  stepEcho = new Delay(0.6, 0.3, true, false);
+  echoWet = new Multiplier(0);
+  stepAmp.patch(stepEcho).patch(echoWet).patch(fxMix);
+
+  // the nerdolas' footsteps
+  for (int k = 0; k < eSteps.length; k++) eSteps[k] = new Steps3D();
+
+  // distant one-shots: slams, pipe clanks, someone running far away
+  distLP = new MoogFilter(300, 0.2);
+  distPan = new Pan(0);
+  distNAmp = new Multiplier(0);
+  Summer distantMix = new Summer();
+  distantMix.patch(distLP);
+  new Noise(1, Noise.Tint.BROWN).patch(distNAmp).patch(distantMix);
+  distO = new Oscil(50, 0, Waves.SINE);
+  distO.patch(distantMix);
+  distLP.patch(distPan).patch(fxMix);
 }
 
 void updateSynth(float dt, float dg) {
@@ -1106,10 +1504,19 @@ void silenceSynth() {
   kick.setAmplitude(0);
   tickAmp.setValue(0);
   chaseLvl = kickEnv = tickEnv = 0;
+  for (Steps3D s : eSteps) if (s != null) {
+    s.env = 0;
+    s.amp.setValue(0);
+  }
+  distType = -1;
+  if (distO != null) distO.setAmplitude(0);
+  if (distNAmp != null) distNAmp.setValue(0);
+  if (echoWet != null) echoWet.setValue(0);
+  setGainDb(ambience, volDb(V_AMB));
 }
 
 void pauseVoices() {
-  for (AudioPlayer v : voices) v.pause();
+  for (Voice3D v : voices) v.pause();
 }
 
 // =====================================================================
@@ -1237,7 +1644,7 @@ void checkAchievements(float d, Enemy ne) {
   boolean all = true;
   for (boolean b : readMsg) all &= b;
   if (all) unlock(13);
-  if (survived >= 180 && usedCount[COXINHA] >= 3 && usedCount[SALADA] + usedCount[LAGRIMAS] + usedCount[CESTA] == 0) unlock(19);
+  if (survived >= 180 && usedCount[COXINHA] >= 3 && usedCount[SALADA] + usedCount[LAGRIMAS] + usedCount[CESTA] + usedCount[MONSTER] == 0) unlock(19);
   if (survived >= 300 && tasersFired == 0 && inv[TASER] > 0) unlock(20);
   if (openCells > 0 && visitedCount >= openCells * 0.8) unlock(24);
   if (survived >= 120 && sprintTime == 0) unlock(25);
@@ -1276,22 +1683,23 @@ void startRun(int mode, int entry) {
   GRID = mode == ENDLESS ? GRID_ENDLESS : (allSix ? GRID_FINAL : GRID_DAY);
   graceTime = GRACE_TIME + (roster.length > 1 ? 2 : 0);
 
-  generateMaze();
+  generateWorld();
   level = buildLevel();
 
   lampType = new int[GRID][GRID];
   lampP = new float[GRID][GRID];
+  float zs = random(1000);
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
-    float r = random(1);
-    lampType[i][j] = blackout ? 2 : (r < 0.08 ? 2 : (r < 0.18 ? 1 : 0));
+    float r = random(1), z = noise(i * 0.14 + zs, j * 0.14 + zs * 0.5);
+    if (blackout) lampType[i][j] = 2;
+    else if (z > 0.64) lampType[i][j] = r < 0.75 ? 2 : 1;      // dead zone
+    else if (z < 0.32) lampType[i][j] = r < 0.4 ? 1 : 0;       // failing ballasts
+    else lampType[i][j] = r < 0.04 ? 2 : (r < 0.12 ? 1 : 0);
   }
-  // dead ends: most have a dead lamp, so there are dark corners to hide in
-  for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
-    if (isWall(i, j)) continue;
-    int open = 0;
-    for (int[] d : DIRS) if (!isWall(i + d[0], j + d[1])) open++;
-    if (open == 1 && random(1) < DEADEND_DARK) lampType[i][j] = 2;
-  }
+
+  // Keep dark hiding corners inside the zoned layout.
+  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++)
+    if (!isWall(i, j) && openNeighbors(i, j) == 1 && random(1) < DEADEND_DARK) lampType[i][j] = 2;
 
   int[] c = randomOpenCell();
   if (!blackout) lampType[c[0]][c[1]] = 0;
@@ -1306,9 +1714,8 @@ void startRun(int mode, int entry) {
 
   spotFlash = 0;
   lastStingMs = -99999;
-  eyeOpen = eyeLX = eyeLY = 0;
-  blinkUntil = 0;
-  nextBlink = millis() + 2000;
+  mainEye = new Eye();
+  for (int k = 0; k < packEyes.length; k++) packEyes[k] = new Eye();
   anyChase = false;
 
   survived = 0;
@@ -1317,10 +1724,12 @@ void startRun(int mode, int entry) {
   parts.clear();
   int nDrops = round(DROPS * mapScale());
   for (int k = 0; k < nDrops; k++) spawnDrop();
+  bakeGI(); // Measure the ordinary level before choosing blessing locations.
   placeSecrets();
   placeDecals();
   placeProps();
   markSecrets();
+  giLive = 1;
   certs.clear();
   certsTaken = 0;
   exitOpen = false;
@@ -1335,9 +1744,14 @@ void startRun(int mode, int entry) {
   }
 
   java.util.Arrays.fill(inv, 0);
+  java.util.Arrays.fill(slotShow, 0);
+  java.util.Arrays.fill(slotPop, 0);
+  java.util.Arrays.fill(lastInv, 0);
+  slotOrder.clear();
   inv[LATA] = START_CANS;
   itemSeen[LATA] = true;
   useType = -1;
+  syncSlots();
   energyUntil = swiftUntil = ghostUntil = fedUntil = pilhadoUntil = 0;
   fireUntil = 0;
   lastThrow = 0;
@@ -1365,22 +1779,31 @@ void startRun(int mode, int entry) {
   exhausted = false;
   msgUntil = 0;
   eyeH = EYE_H;
-  fov = radians(72);
+  fov = radians(BASE_FOV);
   exposureAdapt = 1;
+  cameraExposureTarget = 1; meterNext = 0;
   roll = bobPhase = stepEnv = hbPhase = staticBurst = chewTimer = 0;
   peekSide = peekDir = 0;
   paused = false;
   peekAmt = 0;
+  peekOff.set(0, 0);
   peekL = peekR = null;
   lastStep = 0;
   flicker = 1;
   flickerUntil = 0;
+  moving = sprinting = crouching = false;
+  updateCameraLight(0);
   crouchToggle = false;
   releaseKeys();
   silenceSynth();
 
+  distType = -1;
+  nextDistant = random(8, 16);
+  roomOpen = 0;
+  acousticRefresh = 0; acousticFlowI = acousticFlowJ = -1;
   pauseVoices();
   for (Enemy e : enemies) {
+    voices[e.ch].snap(-80, 0, 12000);
     voices[e.ch].rewind();
     voices[e.ch].loop();
   }
@@ -1438,8 +1861,8 @@ void die(Enemy killer) {
   lockMouse(false);
   silenceSynth();
   pauseVoices();
+  voices[killerCh].snap(6, 0, 12000);
   voices[killerCh].play();
-  setVoice(voices[killerCh], 6 + volDb(V_VOICE), 0);
   newRecord = false;
   if (gameMode == ENDLESS && survived > best) {
     newRecord = true;
@@ -1502,45 +1925,8 @@ void showMsg(String s) {
 }
 
 // =====================================================================
-// MAZE GENERATION
-void generateMaze() {
-  solid = new boolean[GRID][GRID];
-  for (boolean[] row : solid) java.util.Arrays.fill(row, true);
+// OPEN-FLOOR WORLD GENERATION
 
-  ArrayList<int[]> stack = new ArrayList<int[]>();
-  solid[1][1] = false;
-  stack.add(new int[]{1, 1});
-  while (stack.size() > 0) {
-    int[] cur = stack.get(stack.size() - 1);
-    ArrayList<int[]> options = new ArrayList<int[]>();
-    for (int[] d : DIRS) {
-      int ni = cur[0] + d[0] * 2, nj = cur[1] + d[1] * 2;
-      if (ni > 0 && nj > 0 && ni < GRID - 1 && nj < GRID - 1 && solid[ni][nj]) options.add(new int[]{ni, nj});
-    }
-    if (options.isEmpty()) {
-      stack.remove(stack.size() - 1);
-      continue;
-    }
-    int[] nxt = options.get((int) random(options.size()));
-    solid[(cur[0] + nxt[0]) / 2][(cur[1] + nxt[1]) / 2] = false;
-    solid[nxt[0]][nxt[1]] = false;
-    stack.add(nxt);
-  }
-
-  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
-    if (!solid[i][j] || random(1) > 0.12) continue;
-    boolean h = !solid[i - 1][j] && !solid[i + 1][j];
-    boolean v = !solid[i][j - 1] && !solid[i][j + 1];
-    if (h ^ v) solid[i][j] = false;
-  }
-
-  int rooms = round(5 * mapScale());
-  for (int r = 0; r < rooms; r++) {
-    int w = (int) random(3, 6), h = (int) random(3, 6);
-    int i0 = (int) random(1, GRID - 1 - w), j0 = (int) random(1, GRID - 1 - h);
-    for (int i = i0; i < i0 + w; i++) for (int j = j0; j < j0 + h; j++) solid[i][j] = false;
-  }
-}
 
 int[] randomOpenCell() {
   while (true) {
@@ -1559,25 +1945,17 @@ boolean isWall(int i, int j) {
 // LEVEL MESH
 PShape buildLevel() {
   PShape floorS = startMesh(carpet), ceilS = startMesh(roof), wallS = startMesh(wall);
-  float vRep = WALL_H / CELL;
-  for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
-    if (solid[i][j]) continue;
-    float x0 = i * CELL, y0 = j * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
-    addQuad(floorS, new PVector(x0, y0, 0), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
-    addQuad(ceilS, new PVector(x0, y0, WALL_H), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
-    PVector down = new PVector(0, 0, -WALL_H);
-    if (isWall(i - 1, j)) addQuad(wallS, new PVector(x0, y0, WALL_H), new PVector(0, CELL, 0), down, 1, vRep);
-    if (isWall(i + 1, j)) addQuad(wallS, new PVector(x1, y0, WALL_H), new PVector(0, CELL, 0), down, 1, vRep);
-    if (isWall(i, j - 1)) addQuad(wallS, new PVector(x0, y0, WALL_H), new PVector(CELL, 0, 0), down, 1, vRep);
-    if (isWall(i, j + 1)) addQuad(wallS, new PVector(x0, y1, WALL_H), new PVector(CELL, 0, 0), down, 1, vRep);
+  beginLevelChunks(floorS, ceilS, wallS);
+  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
+    float x = i * CELL, y = j * CELL;
+    addQuad(floorS, new PVector(x, y, 0), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
+    addQuad(ceilS, new PVector(x, y, WALL_H), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
   }
-  floorS.endShape();
-  ceilS.endShape();
-  wallS.endShape();
+  appendWallMesh(wallS);
+  floorS.endShape(); ceilS.endShape(); wallS.endShape();
+  finishLevelChunks();
   PShape grp = createShape(GROUP);
-  grp.addChild(floorS);
-  grp.addChild(ceilS);
-  grp.addChild(wallS);
+  grp.addChild(floorS); grp.addChild(ceilS); grp.addChild(wallS);
   return grp;
 }
 
@@ -1591,6 +1969,7 @@ PShape startMesh(PImage tex) {
 }
 
 void addQuad(PShape s, PVector o, PVector a, PVector b, float uRep, float vRep) {
+  if (buildingLevelChunks) addChunkQuad(s, o, a, b, uRep, vRep);
   corner(s, o, a, b, 0, 0, uRep, vRep);
   corner(s, o, a, b, 1, 0, uRep, vRep);
   corner(s, o, a, b, 1, 1, uRep, vRep);
@@ -1604,21 +1983,14 @@ void corner(PShape s, PVector o, PVector a, PVector b, float u, float v, float u
 // =====================================================================
 // SURFACE DETAIL TEXTURES
 PImage makePanel() {
-  PGraphics g = createGraphics(128, 64);
+  PGraphics g = createGraphics(128, 128);
   g.beginDraw();
-  g.background(80);
-  g.noStroke();
-  g.fill(130);
-  g.rect(2, 2, 124, 60);
-  g.fill(255);
-  g.rect(7, 7, 114, 50);
-  g.stroke(228);
-  g.strokeWeight(1);
-  for (int x = 10; x < 121; x += 4) g.line(x, 7, x, 57);
-  for (int y = 10; y < 57; y += 4) g.line(7, y, 121, y);
-  g.noStroke();
-  g.fill(215);
-  g.rect(7, 30, 114, 3);
+  g.background(70);               // frame edge, was 110
+  g.noStroke(); g.fill(160); g.rect(2, 2, 124, 124);   // was 210
+  g.fill(255); g.rect(4, 4, 120, 120);
+  g.stroke(232); g.strokeWeight(1);
+  for (int x = 9; x < 124; x += 5) g.line(x, 4, x, 124);
+  for (int y = 9; y < 124; y += 5) g.line(4, y, 124, y);
   g.endDraw();
   return g.get();
 }
@@ -1765,17 +2137,17 @@ void placeDecals() {
     if (placed == 0 && tries < 1500 && (flow[c[0]][c[1]] < 1 || flow[c[0]][c[1]] > 3)) continue;
     if (placed == 1 && tries < 3000 && (flow[c[0]][c[1]] < 2 || flow[c[0]][c[1]] > 6)) continue;
     int[] d = DIRS[(int) random(4)];
-    if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
+    if (!wallFace(c[0], c[1], d[0], d[1])) continue;
     String face = c[0] + "," + c[1] + "," + d[0] + "," + d[1];
     if (used.contains(face)) continue;
     used.add(face);
     Decal dc = new Decal();
     dc.nx = -d[0];
     dc.ny = -d[1];
-    dc.cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 2);
-    dc.cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 2);
-    dc.z = random(175, 245);
-    dc.w = CELL * 0.9;
+    dc.cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - WALL_THICKNESS / 2 - 2);
+    dc.cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - WALL_THICKNESS / 2 - 2);
+    dc.z = random(140, 205);
+    dc.w = CELL - WALL_THICKNESS - 16;
     dc.h = dc.w * 0.5;
     dc.msg = placed == 1 ? CABRAL_MSG : (placed == 0 ? 0 : placed - 1) % (WALL_MSGS.length - 1);
     dc.tex = graffiti[dc.msg];
@@ -1792,16 +2164,16 @@ void placeProps() {
     for (int tries = 0; tries < 200; tries++) {
       int[] c = randomOpenCell();
       int[] d = DIRS[(int) random(4)];
-      if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
+      if (!wallFace(c[0], c[1], d[0], d[1])) continue;
       String face = (vent ? "v" : "o") + c[0] + "," + c[1] + "," + d[0] + "," + d[1];
       if (used.contains(face)) continue;
       used.add(face);
       Decal dc = new Decal();
       dc.nx = -d[0];
       dc.ny = -d[1];
-      float slide = random(-CELL * 0.3, CELL * 0.3);
-      dc.cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 1.5) + dc.ny * slide;
-      dc.cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 1.5) - dc.nx * slide;
+      float slide = random(-CELL * 0.22, CELL * 0.22);
+      dc.cx = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - WALL_THICKNESS / 2 - 1.5) + dc.ny * slide;
+      dc.cy = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - WALL_THICKNESS / 2 - 1.5) - dc.nx * slide;
       dc.w = vent ? 96 : 28;
       dc.h = vent ? 48 : 42;
       dc.z = vent ? WALL_H - 50 : 46;
@@ -1897,9 +2269,9 @@ void placeCerts() {
       boolean relaxed = tries > 600;
       if (flow[c[0]][c[1]] < (relaxed ? 4 : 8)) continue;
       int[] d = DIRS[(int) random(4)];
-      if (!wallFace(c[0] + d[0], c[1] + d[1])) continue;
-      float x = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - 2.5);
-      float y = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - 2.5);
+      if (!wallFace(c[0], c[1], d[0], d[1])) continue;
+      float x = (c[0] + 0.5) * CELL + d[0] * (CELL * 0.5 - WALL_THICKNESS / 2 - 2.5);
+      float y = (c[1] + 0.5) * CELL + d[1] * (CELL * 0.5 - WALL_THICKNESS / 2 - 2.5);
       boolean ok = true;
       for (Cert o : certs) if (dist(o.x, o.y, x, y) < (relaxed ? CELL * 3 : CELL * 7)) ok = false;
       if (!ok) continue;
@@ -1923,7 +2295,7 @@ void updateFuga(float dt) {
   for (int k = 0; k < certs.size(); k++) {
     Cert ct = certs.get(k);
     float d = dist(player.x, player.y, ct.x, ct.y);
-    if (d > 175) continue;
+    if (d > 175 || !lineOfSight(player.x, player.y, ct.x, ct.y)) continue;
     float facing = ((ct.x - player.x) * fx + (ct.y - player.y) * fy) / max(d, 1);
     if (facing < 0.35) continue;
     if (d < bestD) {
@@ -1931,7 +2303,7 @@ void updateFuga(float dt) {
       nearCert = k;
     }
   }
-  if (exitOpen && dist(player.x, player.y, exitX(), exitY()) < 150) escapeWin();
+  if (exitOpen && dist(player.x, player.y, exitX(), exitY()) < 150 && lineOfSight(player.x, player.y, exitX(), exitY())) escapeWin();
 }
 
 void collectCert() {
@@ -1975,24 +2347,24 @@ void addArrowsTo(int ti, int tj, int count) {
     int i = c[0], j = c[1];
     if (f[i][j] < 3 || f[i][j] > 16) continue;
     int _open = 0;
-    for (int[] d : DIRS) if (!isWall(i + d[0], j + d[1])) _open++;
+    for (int[] d : DIRS) if (canStep(i, j, i + d[0], j + d[1])) _open++;
     if (_open == 4) continue;
     if (_open < 3 && tries < 500) continue;
     int si = 0, sj = 0;
     for (int[] d : DIRS) {
       int ni = i + d[0], nj = j + d[1];
-      if (!isWall(ni, nj) && f[ni][nj] == f[i][j] - 1) {
+      if (canStep(i, j, ni, nj) && f[ni][nj] == f[i][j] - 1) {
         si = d[0];
         sj = d[1];
         break;
       }
     }
     ArrayList<int[]> walls = new ArrayList<int[]>();
-    for (int[] d : DIRS) if (wallFace(i + d[0], j + d[1]) && d[0] * si + d[1] * sj == 0) walls.add(d);
+    for (int[] d : DIRS) if (wallFace(i, j, d[0], d[1]) && d[0] * si + d[1] * sj == 0) walls.add(d);
     if (walls.isEmpty()) continue;
     int[] d = walls.get((int) random(walls.size()));
-    float cx = (i + 0.5) * CELL + d[0] * (CELL * 0.5 - 3);
-    float cy = (j + 0.5) * CELL + d[1] * (CELL * 0.5 - 3);
+    float cx = (i + 0.5) * CELL + d[0] * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
+    float cy = (j + 0.5) * CELL + d[1] * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
     boolean tooClose = false;
     for (Arrow o : arrows) if (dist(o.cx, o.cy, cx, cy) < CELL * 2.5) tooClose = true;
     if (tooClose) continue;
@@ -2121,7 +2493,7 @@ void chooseExit() {
       if (solid[i][j]) continue;
       if (pass == 0 && flow[i][j] < maxD * 0.7) continue;
       for (int[] d : DIRS) {
-        if (!wallFace(i + d[0], j + d[1])) continue;
+        if (!wallFace(i, j, d[0], d[1])) continue;
         boolean taken = false;
         for (Cert ct : certs) if (ct.i == i && ct.j == j && ct.di == d[0] && ct.dj == d[1]) taken = true;
         if (!taken) cand.add(new int[]{i, j, d[0], d[1]});
@@ -2150,13 +2522,13 @@ void drawExit() {
   noTint();
   float nx = -exitDI, ny = -exitDJ;
   float rx = ny, ry = -nx;
-  float cx = (exitI + 0.5) * CELL + exitDI * (CELL * 0.5 - 3);
-  float cy = (exitJ + 0.5) * CELL + exitDJ * (CELL * 0.5 - 3);
+  float cx = (exitI + 0.5) * CELL + exitDI * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
+  float cy = (exitJ + 0.5) * CELL + exitDJ * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
   float hw = 110;
   beginShape(QUADS);
   texture(exitTex);
-  vertex(cx - rx * hw, cy - ry * hw, 412, 0, 0);
-  vertex(cx + rx * hw, cy + ry * hw, 412, 1, 0);
+  vertex(cx - rx * hw, cy - ry * hw, WALL_H - 8, 0, 0);
+  vertex(cx + rx * hw, cy + ry * hw, WALL_H - 8, 1, 0);
   vertex(cx + rx * hw, cy + ry * hw, 0, 1, 1);
   vertex(cx - rx * hw, cy - ry * hw, 0, 0, 1);
   endShape();
@@ -2490,7 +2862,8 @@ void initModels() {
   coxModels[2] = loadItem("item_coxinha_centro.obj");
   saladaModel = loadItem("item_salada.obj");
   lagrimasModel = loadItem("item_lagrimas.obj");
-  lagrimasModel.removeChild(lagrimasModel.getChildIndex(lagrimasModel.getChild("water_lable")));   // our own label goes on instead
+  PShape oldLabel = lagrimasModel.getChild("water_lable");
+  if (oldLabel != null) lagrimasModel.removeChild(lagrimasModel.getChildIndex(oldLabel));   // our own label goes on instead
   lagrimasLabel = makeLagrimasLabel();
   cestaModel = loadItem("item_cesta.obj");
   taserModel = loadItem("item_taser.obj");
@@ -2561,11 +2934,14 @@ PShape loadItem(String file) {
 }
 
 void drawItem(PShape grp) {
-  for (PShape ch : grp.getChildren()) {
-    boolean glass = "glass".equals(ch.getName());
-    if (glass) hint(DISABLE_DEPTH_MASK);
-    shape(ch);
-    if (glass) hint(ENABLE_DEPTH_MASK);
+  if (grp == null) return;
+  for (int pass = 0; pass < 2; pass++) {
+    if (pass == 1) hint(DISABLE_DEPTH_MASK);
+    for (PShape ch : grp.getChildren()) {
+      boolean glass = "glass".equals(ch.getName());
+      if (glass == (pass == 1)) shape(ch);
+    }
+    if (pass == 1) { flush(); hint(ENABLE_DEPTH_MASK); }
   }
 }
 void lathe(float[] r, float[] h, int n, int segs, int cBot, int cTop, float grain) {
@@ -2760,7 +3136,7 @@ void drawDrops3D() {
       popMatrix();
     }
 
-    itemLights(dr.x, dr.y, lerp(1, vis, 0.5));
+    itemLights(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0), lerp(1, vis, 0.5));
 
     pushMatrix();
     translate(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0));
@@ -2779,18 +3155,36 @@ void drawDrops3D() {
 }
 
 // the room's lamp + your flashlight on a small object at (x, y); L dims it with the fog
-void itemLights(float x, float y, float L) {
+void itemLights(float x, float y, float z, float L) {
   int ci = cellOf(x), cj = cellOf(y);
-  float lp = lampP[ci][cj];
-  float amb = (0.3 + 0.5 * lp) * L;
+  float lp = lineOfSight(x, y, (ci + 0.5) * CELL, (cj + 0.5) * CELL) ? lampP[ci][cj] : 0;
+  // Existing room bounce, without an invented minimum light in dead zones.
+  float bounce = 0;
+  if (giField != null && giSize > 0) {
+    int gx = constrain(floor(x / (CELL * GRID) * giSize), 0, giSize - 1);
+    int gy = constrain(floor(y / (CELL * GRID) * giSize), 0, giSize - 1);
+    float live = giDynamic == null ? 1 : (giDynamic.pixels[cj * GRID + ci] & 255) / 255.0;
+    bounce = giField[gy * giSize + gx] * live;
+  }
+  float amb = constrain(0.5 * lp + 2 * bounce, 0, 1.5) * L;
   noLights();
   lightFalloff(1, 0, 0);
   ambientLight(70 * amb, 62 * amb, 48 * amb);
   lightFalloff(1, 0, 0.000004);
-  pointLight(255 * lp * L, 235 * lp * L, 185 * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 25);
+  pointLight(255 * lp * L, 235 * lp * L, 185 * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 3);
   lightFalloff(1, 0, 0);
-  if (flashlightOn) spotLight(210 * flicker * L, 220 * flicker * L, 235 * flicker * L,
-    camX, camY, camZ, camDX, camDY, camDZ, radians(30), 2);
+  float fl = flashlightStrength();
+  float d = dist(x, y, z, flashPos.x, flashPos.y, flashPos.z);
+  if (fl > 0 && d < FLASH_RANGE && lineOfSight(flashPos.x, flashPos.y, x, y)) {
+    // Fixed-pipeline OBJ lighting uses the same camera source, broad spread and short reach.
+    float t = constrain((d - FLASH_RANGE * 0.5) / (FLASH_RANGE * 0.5), 0, 1);
+    float fade = 1 - t * t * (3 - 2 * t);
+    lightFalloff(1, 0, 1.0 / sq(FLASH_FALLOFF));
+    float f = 210 * FLASH_POWER * fl * L * fade;
+    spotLight(f * FLASH_COLOR.x, f * FLASH_COLOR.y, f * FLASH_COLOR.z,
+      flashPos.x, flashPos.y, flashPos.z, flashDir.x, flashDir.y, flashDir.z, acos(FLASH_OUTER_COS), 1);
+    lightFalloff(1, 0, 0);
+  }
 }
 
 void drawViewModel3D() {
@@ -2804,7 +3198,7 @@ void drawViewModel3D() {
   perspective(radians(55), float(width) / height, 1, 3000);
   camera(0, 0, 0, 0, 0, -1, 0, 1, 0);
 
-  float lvl = constrain(localLight + (flashlightOn ? 0.35 * flicker : 0), 0.12, 1.3);
+  float lvl = constrain(localLight + 0.35 * flashlightStrength(), 0.12, 1.3);
   ambientLight(60 * lvl, 54 * lvl, 42 * lvl);
   lightSpecular(140 * lvl, 130 * lvl, 110 * lvl);
   directionalLight(255 * lvl, 236 * lvl, 190 * lvl, -0.25, 0.75, -0.6);
@@ -2956,7 +3350,7 @@ void applyBuff(int type) {
     pilhadoUntil = now + BUFF_MS[MONSTER];
     if (inv[LATA] < MAX_STACK) inv[LATA]++;
     itemSeen[LATA] = true;
-    showMsg("PILHADO  —  VOCÊ OS VÊ ATRAVÉS DAS PAREDES   ·   + LATA VAZIA [G]");
+    showMsg("PILHADO  —  VOCÊ OS VÊ ATRAVÉS DAS PAREDES   ·   LATA VAZIA [G]");
     break;
   }
   if (usedType[0] && usedType[1] && usedType[2] && usedType[3] && survived <= 120) unlock(4);
@@ -3025,7 +3419,7 @@ void update(float dt) {
     float room = leanRoom(peekSide);
     peekOff.set(-sin(yaw) * peekSide * room, cos(yaw) * peekSide * room);
   }
-  peekAmt = lerp(peekAmt, peekSide != 0 ? 1 : 0, 1 - exp(-dt * 7));
+  peekAmt = lerp(peekAmt, peekSide != 0 ? 1 : 0, 1 - exp(-dt * (peekSide != 0 ? 4 : 9)));
   peekL = peekSide == 0 ? findCorner(-1) : null;
   peekR = peekSide == 0 ? findCorner(1) : null;
 
@@ -3097,6 +3491,17 @@ void update(float dt) {
 
   // ---- the nerdolas
   playerExpo = exposure();
+  // Resolve flicker once before gameplay tests; render sees the identical intensity.
+  float flashDanger = danger(threatD);
+  if (now < flickerUntil) {
+    flicker = random(1) < 0.5 ? random(0.05, 0.4) : 1;
+  } else {
+    flicker = 1;
+    if (random(1) < (3 * flashDanger + 2 * chaseLvl) * dt) flickerUntil = now + random(80, 400);
+  }
+  float strafe = (kRight ? 1 : 0) - (kLeft ? 1 : 0);
+  roll = lerp(roll, strafe * 0.03, 1 - exp(-dt * 7));
+  updateCameraLight(dt); // Shared camera source, direction and instant state for AI/secrets/render.
   updateFlow();
   if (survived > graceTime) for (Enemy e : enemies) updateAI(e, dt);
 
@@ -3106,7 +3511,7 @@ void update(float dt) {
   anyChase = false;
   for (Enemy e : enemies) {
     float d = dist(player.x, player.y, e.pos.x, e.pos.y);
-    if (d < KILL_DIST && now >= e.stunUntil) {
+    if (d < KILL_DIST && now >= e.stunUntil && lineOfSight(player.x, player.y, e.pos.x, e.pos.y)) {
       die(e);
       return;
     }
@@ -3126,20 +3531,21 @@ void update(float dt) {
   // ---- pick up drops
   for (int k = drops.size() - 1; k >= 0; k--) {
     Drop dr = drops.get(k);
-    if (dist(player.x, player.y, dr.x, dr.y) < 110 && inv[dr.type] < MAX_STACK) {
+    if (dist(player.x, player.y, dr.x, dr.y) < 110 && inv[dr.type] < MAX_STACK && lineOfSight(player.x, player.y, dr.x, dr.y)) {
       inv[dr.type]++;
+      syncSlots();
       collectedType[dr.type]++;
       itemSeen[dr.type] = true;
       drops.remove(k);
       stepEnv = 0.3;
-      showMsg("+ " + ITEM_NAMES[dr.type].toUpperCase() + "   [" + ITEM_KEYS[dr.type] + "]");
+      showMsg("+ " + ITEM_NAMES[dr.type].toUpperCase() + "   [" + keyFor(dr.type) + "]");
       spawnDrop();
       itemsCollected++;
       pickupTimes.add(now);
       while (pickupTimes.size() > 0 && now - pickupTimes.get(0) > 45000) pickupTimes.remove(0);
       if (pickupTimes.size() >= 6) unlock(5);
       if (itemsCollected >= 25) unlock(6);
-      if (collectedType[TASER] >= 3 && collectedType[COXINHA] + collectedType[SALADA] + collectedType[LAGRIMAS] + collectedType[CESTA] == 0) unlock(18);
+      if (collectedType[TASER] >= 3 && collectedType[COXINHA] + collectedType[SALADA] + collectedType[LAGRIMAS] + collectedType[CESTA] + collectedType[MONSTER] == 0) unlock(18);
       if (inv[COXINHA] == MAX_STACK && inv[SALADA] == MAX_STACK && inv[LAGRIMAS] == MAX_STACK && inv[CESTA] == MAX_STACK) unlock(22);
     }
   }
@@ -3157,7 +3563,7 @@ void update(float dt) {
   }
 
   for (Decal dc : decals) {
-    if (dc.msg >= 0 && dist(player.x, player.y, dc.cx, dc.cy) < CELL * 1.3) {
+    if (dc.msg >= 0 && dist(player.x, player.y, dc.cx, dc.cy) < CELL * 1.3 && lineOfSight(player.x, player.y, dc.cx, dc.cy)) {
       readMsg[dc.msg] = true;
       msgSeen[dc.msg] = true;
     }
@@ -3171,27 +3577,18 @@ void update(float dt) {
   checkAchievements(nearD, nearE);
 
   float dg = danger(threatD);
-  if (now < flickerUntil) {
-    flicker = random(1) < 0.5 ? random(0.05, 0.4) : 1;
-  } else {
-    flicker = 1;
-    if (random(1) < (3 * dg + 2 * chaseLvl) * dt) flickerUntil = now + random(80, 400);
-  }
   spotFlash = max(0, spotFlash - dt * 2.5);
 
-  float strafe = (kRight ? 1 : 0) - (kLeft ? 1 : 0);
-  roll = lerp(roll, strafe * 0.03, 1 - exp(-dt * 7));
-  float targetFov = radians(sprinting ? 82 : 72) - dg * radians(6);
+  float targetFov = radians(sprinting ? BASE_FOV + 10 : BASE_FOV) - dg * radians(6);
   fov = lerp(fov, targetFov, 1 - exp(-dt * 5));
 
   updateLampGrid();
 
-  float seen = localLight * 0.85 + (flashlightOn ? 0.18 * flicker : 0);
-  float targetExp = constrain(sqrt(0.9 / max(0.15, seen)), 0.8, 1.6);
-  exposureAdapt = lerp(exposureAdapt, targetExp, 1 - exp(-dt * 1.2));
+  float adaptationSpeed = cameraExposureTarget < exposureAdapt ? 2.4 : 0.8;
+  exposureAdapt = lerp(exposureAdapt, cameraExposureTarget, 1 - exp(-dt * adaptationSpeed));
   camGain = constrain(map(exposureAdapt, 0.8, 1.6, 0, 1), 0, 1);
 
-  updateVoices();
+  update3DAudio(dt);
   updateSynth(dt, dg);
 }
 
@@ -3206,7 +3603,7 @@ boolean hitsWall(float x, float y, float r) {
       if (sq(x - cx) + sq(y - cy) < r * r) return true;
     }
   }
-  return false;
+  return hitsWallSlab(x, y, r);
 }
 
 // hips to eyes: the radius of the arc the head swings on when leaning
@@ -3228,7 +3625,7 @@ float leanRoom(int side) {
 float viewLen(float x, float y) {
   float fx = cos(yaw), fy = sin(yaw);
   for (float s = 20; s < PEEK_VIEW_GAIN * 4; s += 20) {
-    if (isWall(cellOf(x + fx * s), cellOf(y + fy * s))) return s;
+    if (!lineOfSight(x, y, x + fx * s, y + fy * s)) return s;
   }
   return PEEK_VIEW_GAIN * 4;
 }
@@ -3284,7 +3681,7 @@ int[] roughArea(int maxRooms) {
 // NEXTBOT AI (per nerdola, with traits)
 float enemyBaseSpeed() {
   float t = max(0, survived - graceTime);
-  if (gameMode == FUGA) return min(ENEMY_MAX + 40, ENEMY_START + certsTaken * CERT_SPEEDUP + t * ENEMY_RAMP * 0.4);
+  if (gameMode == FUGA) return min(ENEMY_MAX + 40, ENEMY_START + certsTaken * CERT_SPEEDUP + t * ENEMY_RAMP * 0.75);
   return min(ENEMY_MAX, ENEMY_START + t * ENEMY_RAMP);
 }
 
@@ -3293,6 +3690,7 @@ void updateAI(Enemy e, float dt) {
   int c = e.ch;
   if (now < e.stunUntil) {
     e.sees = false;
+    e.speedNow = 0;
     return;
   }
   if (c == T_LUCA) {
@@ -3306,12 +3704,19 @@ void updateAI(Enemy e, float dt) {
   boolean ghost = now < ghostUntil;
   boolean confused = now < e.confusedUntil;
 
-  // ---- sight: a cone ahead of it, a clear line, and range by how lit you are;
+  // ---- sight: 360 degrees, a clear line, and range by how lit you are;
+  // The short video light grants no long-range reveal beyond its actual illumination.
   // invisible = never seen; crouching shrinks it
-  float sight = (flashlightOn ? SIGHT_FLASH : SIGHT_CELLS * lerp(SIGHT_DARK, 1, playerExpo)) * CELL * SIGHT_MUL[c];
+  boolean inBeam = flashlightAimsAt(e.pos.x, e.pos.y, 135, FLASH_OUTER_COS);
+  float lit = constrain(max(playerExpo, flashlightStrength() * 0.12), 0, 1);
+  float sight = (inBeam ? SIGHT_FLASH : SIGHT_CELLS * lerp(SIGHT_DARK, 1, lit)) * CELL * SIGHT_MUL[c];
   if (crouching) sight *= moving ? CROUCH_SIGHT : CROUCH_STILL_SIGHT;
-  boolean inCone = abs(angleDiff(e.face, atan2(player.y - e.pos.y, player.x - e.pos.x))) < VIEW_HALF;
-  e.sees = !ghost && !confused && d < sight && inCone && lineOfSight(e.pos.x, e.pos.y, player.x, player.y);
+  float peekEase = peekAmt * peekAmt * (3 - 2 * peekAmt);
+  float peekReach = peekOff.mag();
+  float headTilt = asin(constrain(peekReach / leanArm(), 0, 1)) * peekEase;
+  float headScale = peekReach > 0 ? leanArm() * sin(headTilt) / peekReach : 0;
+  float sightX = player.x + peekOff.x * headScale, sightY = player.y + peekOff.y * headScale;
+  e.sees = !ghost && !confused && dist(e.pos.x, e.pos.y, sightX, sightY) < sight && lineOfSight(e.pos.x, e.pos.y, sightX, sightY);
 
   // ---- hearing: only while moving; crouch-walking = same room (Gustavo: one room)
   float hearRange;
@@ -3322,12 +3727,8 @@ void updateAI(Enemy e, float dt) {
 
   // ---- proximity bubble
   float touch = ghost ? GHOST_TOUCH : (crouching ? CROUCH_TOUCH : TOUCH_CELLS);
-  boolean bumped = !confused && d < CELL * touch;
+  boolean bumped = !confused && d < CELL * touch && lineOfSight(e.pos.x, e.pos.y, player.x, player.y);
 
-  // ---- peeking around a corner: only one coming up behind you notices you
-  if (peekSide != 0 && (e.pos.x - player.x) * cos(yaw) + (e.pos.y - player.y) * sin(yaw) >= 0) {
-    e.sees = hears = bumped = false;
-  }
 
   boolean detected = e.sees || hears || bumped;
 
@@ -3420,7 +3821,14 @@ void updateAI(Enemy e, float dt) {
   PVector dir = PVector.sub(target, e.pos);
   float m = dir.mag();
   boolean mv = m > 0 && speed > 0;
-  if (mv) e.pos.add(dir.mult(min(speed * dt, m) / m));
+  float moved = mv ? min(speed * dt, m) : 0;
+  if (mv) {
+    PVector previous = e.pos.copy();
+    PVector delta = dir.copy().mult(moved / m);
+    moveEnemy(e, delta.x, delta.y);
+    moved = PVector.dist(previous, e.pos);
+  }
+  e.speedNow = dt > 0 ? moved / dt : 0;
 
   // ---- where it looks: at you while it sees you, along its way while walking,
   // and scanning left and right when it stands still
@@ -3456,7 +3864,7 @@ float exposure() {
   float acc = 0;
   int pi = cellOf(player.x), pj = cellOf(player.y);
   for (int i = pi - 1; i <= pi + 1; i++) for (int j = pj - 1; j <= pj + 1; j++) {
-    if (isWall(i, j) || lampType[i][j] == 2) continue;
+    if (isWall(i, j) || lampType[i][j] == 2 || !lineOfSight(player.x, player.y, (i + 0.5) * CELL, (j + 0.5) * CELL)) continue;
     float lx = (i + 0.5) * CELL, ly = (j + 0.5) * CELL;
     if (!lineOfSight(player.x, player.y, lx, ly)) continue;   // walls block the light
     float dd = dist(player.x, player.y, lx, ly);
@@ -3486,7 +3894,7 @@ void drawXray() {
     float d = dist(player.x, player.y, e.pos.x, e.pos.y);
     float far = map(constrain(d, CELL * 8, CELL * 20), CELL * 8, CELL * 20, 1, 0.35);
     tint(150, 205, 255, 255 * XRAY_ALPHA * fade * pulse * far);
-    float sz = 300, base = 40;
+    float sz = 220, base = 25;
     pushMatrix();
     translate(e.pos.x, e.pos.y, 0);
     rotateZ(atan2(player.y - e.pos.y, player.x - e.pos.x));
@@ -3507,7 +3915,7 @@ void drawXray() {
 }
 
 // =====================================================================
-// THE BLESSING OF CABRAL: dark dead ends that open under the flashlight, and the Pizza do Papponi
+// THE BLESSING OF CABRAL: illuminated wall panels open shortcuts and reveal Pizza do Papponi
 // one pizza per phase: POLIWEEK days 0-5, VS. 6, RECUPERAÇÃO, then ENDLESS
 int phase() {
   return runDay >= 0 ? runDay : PHASES - 1;
@@ -3519,49 +3927,97 @@ float pizzaMul() {
   return 1 + PIZZA_BONUS * n;
 }
 
-// dark dead ends whose far wall opens: into a hidden nook if it's walled in on every other side,
-// otherwise into a secret shortcut to the corridor behind it (nooks are picked first)
+// Blessings select pre-existing shadows. These limits are linear irradiance,
+// before surface color, camera gain, flashlight or the player's proximity glow.
+final float BLESSING_MAX_DIRECT = 0.004;
+final float BLESSING_MAX_LIGHT = 0.025;
+boolean giPlacementReady;
+LightPatch blessingLightProbe;
+
+class BlessingCandidate {
+  int i,j,ni,nj;
+  float light;
+  BlessingCandidate(int i,int j,int ni,int nj,float light) {
+    this.i=i;this.j=j;this.ni=ni;this.nj=nj;this.light=light;
+  }
+}
+
+// Read the same face/height atlas as surfaceBounce(), without changing it.
+float blessingBounceLayer(int face,int plane,float along,int layer) {
+  float row=constrain(along-0.5,0,giWallSize-1);
+  int a=floor(row),b=min(a+1,giWallSize-1);float t=row-a;
+  int ca=wallGI.pixels[giWallIndex(face,plane,a,layer)],cb=wallGI.pixels[giWallIndex(face,plane,b,layer)];
+  float r=lerp((ca>>16)&255,(cb>>16)&255,t)/255.0;
+  float g=lerp((ca>>8)&255,(cb>>8)&255,t)/255.0;
+  float blue=lerp(ca&255,cb&255,t)/255.0;
+  return 0.25*(0.299*r/max(1-r,0.02)+0.587*g/max(1-g,0.02)+0.114*blue/max(1-blue,0.02));
+}
+
+float blessingBounce(float x,float y,float z,int nx,int ny) {
+  float unit=CELL/WALL_SUBDIV;
+  int face=nx>0?0:nx<0?1:ny>0?2:3;
+  int plane=constrain(round((nx!=0?x:y)/unit),0,giWallSize);
+  float along=constrain((nx!=0?y:x)/unit,0.5,giWallSize-0.5);
+  float h=constrain(z/WALL_H*GI_LAYERS-0.5,0,GI_LAYERS-1);
+  int a=floor(h),b=min(a+1,GI_LAYERS-1);
+  return lerp(blessingBounceLayer(face,plane,along,a),blessingBounceLayer(face,plane,along,b),h-a);
+}
+
+// Reject the face if any part of the 1.2 m symbol receives noticeable fixed
+// light. Failing ballasts are evaluated conservatively, not during an off flash.
+float blessingWallLight(int i,int j,int di,int dj) {
+  int nx=-di,ny=-dj;
+  float x=(i+0.5)*CELL+di*(CELL*0.5-WALL_THICKNESS/2);
+  float y=(j+0.5)*CELL+dj*(CELL*0.5-WALL_THICKNESS/2),maximum=0;
+  if (blessingLightProbe==null) blessingLightProbe=new LightPatch(x,y,EYE_H,nx,ny,0,new float[]{1,1,1});
+  LightPatch p=blessingLightProbe;
+  p.nx=nx;p.ny=ny;p.nz=0;
+  for (int side=-1;side<=1;side++) for (int height=-1;height<=1;height++) {
+    p.x=x+ny*side*60;p.y=y-nx*side*60;p.z=EYE_H+height*60;
+    bakePatchDirect(p);
+    float direct=(0.299*p.dr+0.587*p.dg+0.114*p.db)/0.7;
+    if (direct>BLESSING_MAX_DIRECT) return Float.POSITIVE_INFINITY;
+    float total=direct+blessingBounce(p.x,p.y,p.z,nx,ny);
+    maximum=max(maximum,total);
+    if (maximum>BLESSING_MAX_LIGHT) return Float.POSITIVE_INFINITY;
+  }
+  return maximum;
+}
+
+// Lighting is baked before choosing paint locations. No lamps, lightmap values,
+// or material visibility rules are changed to accommodate a blessing.
 void placeSecrets() {
   secrets.clear();
-  ArrayList<int[]> cand = new ArrayList<int[]>();
-  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
-    if (isWall(i, j) || flow[i][j] < 4) continue;
-    int open = 0, oi = 0, oj = 0;
-    for (int[] d : DIRS) {
-      if (isWall(i + d[0], j + d[1])) continue;
-      open++;
-      oi = d[0];
-      oj = d[1];
+  if (!giPlacementReady) bakeGI();
+  ArrayList<BlessingCandidate> candidates=new ArrayList<BlessingCandidate>();
+  for (int i=1;i<GRID-1;i++) for (int j=1;j<GRID-1;j++) {
+    if (flow[i][j]<4) continue;
+    for (int[] d:DIRS) {
+      int ni=i+d[0],nj=j+d[1];
+      if (isWall(ni,nj)||!wallBetween(i,j,ni,nj)) continue;
+      float light=blessingWallLight(i,j,d[0],d[1]);
+      if (Float.isFinite(light)) candidates.add(new BlessingCandidate(i,j,ni,nj,light));
     }
-    if (open != 1) continue;
-    int wi = i - oi, wj = j - oj;              // the wall facing you as you walk in
-    if (wi < 1 || wj < 1 || wi > GRID - 2 || wj > GRID - 2) continue;
-    int around = 0;
-    for (int[] d : DIRS) {
-      int ni = wi + d[0], nj = wj + d[1];
-      if ((ni != i || nj != j) && !isWall(ni, nj)) around++;
-    }
-    cand.add(new int[]{i, j, wi, wj, around + (flow[i][j] > SECRET_NEAR ? 10 : 0)});
   }
-  java.util.Collections.shuffle(cand);
-  java.util.Collections.sort(cand, new java.util.Comparator<int[]>() {
-    public int compare(int[] a, int[] b) { return a[4] - b[4]; }
+  java.util.Collections.shuffle(candidates);
+  java.util.Collections.sort(candidates,new java.util.Comparator<BlessingCandidate>() {
+    public int compare(BlessingCandidate a,BlessingCandidate b) {
+      int lightOrder=Float.compare(a.light,b.light);
+      if (lightOrder!=0) return lightOrder;
+      return (flow[a.i][a.j]>SECRET_NEAR?1:0)-(flow[b.i][b.j]>SECRET_NEAR?1:0);
+    }
   });
-  boolean pizzaLeft = !pizzaGot[phase()];
-  for (int[] c : cand) {
-    if (secrets.size() >= SECRETS) break;
-    boolean nextToOther = false;                // two nooks side by side would open into each other
-    for (Secret o : secrets) if (abs(o.wi - c[2]) + abs(o.wj - c[3]) <= 1) nextToOther = true;
-    if (nextToOther) continue;
-    Secret s = new Secret();
-    s.di = c[0];
-    s.dj = c[1];
-    s.wi = c[2];
-    s.wj = c[3];
-    s.pizza = pizzaLeft && secrets.isEmpty();
-    lampType[s.di][s.dj] = 2;                   // always a dark dead end
-    secrets.add(s);
+  for (BlessingCandidate c:candidates) {
+    if (secrets.size()==SECRETS) break;
+    boolean nearby=false;
+    for (Secret other:secrets)
+      if (abs(other.di-c.i)+abs(other.dj-c.j)<3||secretEdge(c.i,c.j,c.ni,c.nj)) nearby=true;
+    if (nearby) continue;
+    Secret s=new Secret();s.di=c.i;s.dj=c.j;s.wi=c.ni;s.wj=c.nj;
+    s.pizza=!pizzaGot[phase()]&&secrets.isEmpty();secrets.add(s);
   }
+  // Fewer optional secrets is preferable to marking a lit wall or creating a
+  // conspicuous artificial shadow in an otherwise bright generated level.
 }
 
 // paint Cabral's sun on each secret wall, at eye height
@@ -3570,9 +4026,9 @@ void markSecrets() {
     Decal dc = new Decal();
     dc.nx = s.di - s.wi;
     dc.ny = s.dj - s.wj;
-    dc.cx = (s.di + 0.5) * CELL - dc.nx * (CELL * 0.5 - 2);
-    dc.cy = (s.dj + 0.5) * CELL - dc.ny * (CELL * 0.5 - 2);
-    dc.z = 185;
+    dc.cx = (s.di + 0.5) * CELL - dc.nx * (CELL * 0.5 - WALL_THICKNESS / 2 - 2);
+    dc.cy = (s.dj + 0.5) * CELL - dc.ny * (CELL * 0.5 - WALL_THICKNESS / 2 - 2);
+    dc.z = EYE_H;
     dc.w = dc.h = 120;
     dc.msg = -1;
     dc.tex = cabralMark;
@@ -3615,26 +4071,23 @@ PImage makeCabralMark() {
   return g.get();
 }
 
-boolean secretWall(int i, int j) {
-  for (Secret s : secrets) if (!s.open && s.wi == i && s.wj == j) return true;
-  return false;
-}
+
 
 // a wall face things can hang on (not a secret one: it's going to open)
-boolean wallFace(int i, int j) {
-  return isWall(i, j) && !secretWall(i, j);
+boolean wallFace(int i, int j, int di, int dj) {
+  return !isWall(i, j) && wallBetween(i, j, i + di, j + dj) && !secretEdge(i, j, i + di, j + dj);
 }
 
 void updateSecrets(float dt) {
   for (Secret s : secrets) {
     float dcx = (s.di + 0.5) * CELL, dcy = (s.dj + 0.5) * CELL;
-    if (!s.open) {
-      // the far wall of the dead end, in your flashlight's beam, from close by
-      float wx = dcx + (s.wi - s.di) * CELL * 0.5, wy = dcy + (s.wj - s.dj) * CELL * 0.5;
+    if (!s.opened) {
+      // The actual near wall surface, illuminated from the approach side.
+      float wx = dcx + (s.wi - s.di) * (CELL * 0.5 - WALL_THICKNESS / 2), wy = dcy + (s.wj - s.dj) * (CELL * 0.5 - WALL_THICKNESS / 2);
       float d = dist(player.x, player.y, wx, wy);
-      float aim = abs(angleDiff(yaw, atan2(wy - player.y, wx - player.x)));
-      boolean lit = flashlightOn && d < CELL * 2.2 && aim < radians(20) && abs(pitch) < 0.7
-        && lineOfSight(player.x, player.y, dcx, dcy);
+      // Keep the camera aimed at the paint; the short flood must actually reach it.
+      float mx = wx + (s.di - s.wi) * 2, my = wy + (s.dj - s.wj) * 2;
+      boolean lit = flashlightOn && d < CELL * 2.2 && flashlightAimsAt(mx, my, EYE_H, 0.97);
       s.light = lit ? s.light + dt : max(0, s.light - dt * 2);
       if (lit) staticBurst = max(staticBurst, 0.15 * s.light / REVEAL_TIME);
       if (s.light >= REVEAL_TIME) openSecret(s);
@@ -3645,13 +4098,19 @@ void updateSecrets(float dt) {
 }
 
 void openSecret(Secret s) {
-  s.open = true;
+  acousticRefresh = 0; // The opened wall changes sound paths immediately.
+  s.opened = true;
   decals.remove(s.mark);
-  solid[s.wi][s.wj] = false;
-  lampType[s.wi][s.wj] = 0;                     // the nook is lit: the blessing
+  setWallBetween(s.di, s.dj, s.wi, s.wj, false);
+  rebuildWallVoxels();
+  for (Enemy e : enemies) {
+    e.goalFlow = e.navFlow = null;
+    e.goalI = e.goalJ = -1;
+  }
   level = buildLevel();
   flowI = -1;
   updateFlow();
+  queueGIBake(); // Rebuild in short slices while the passage remains playable.
   staticBurst = max(staticBurst, 0.5);
   achT = 0;                                     // the little chime
   if (s.pizza) {
@@ -3677,11 +4136,11 @@ void drawPizzas() {
   float t = millis() / 1000.0;
   noStroke();
   for (Secret s : secrets) {
-    if (!s.open || !s.pizza || s.eaten) continue;
+    if (!s.opened || !s.pizza || s.eaten) continue;
     float x = (s.wi + 0.5) * CELL, y = (s.wj + 0.5) * CELL;
     float dd = dist(player.x, player.y, x, y);
     if (dd > CELL * 6) continue;
-    itemLights(x, y, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5));
+    itemLights(x, y, 125 + sin(t * 2.2) * 10, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5));
     emissive(45, 28, 8);                        // a warm, blessed glow
     pushMatrix();
     translate(x, y, 125 + sin(t * 2.2) * 10);
@@ -3743,7 +4202,7 @@ void throwCan() {
   c.x = camX + cos(yaw) * 30;
   c.y = camY + sin(yaw) * 30;
   c.z = camZ - 30;
-  if (isWall(cellOf(c.x), cellOf(c.y))) {    // hugging a wall: start from the body instead
+  if (hitsWall(c.x, c.y, CAN_FLOOR + 2)) {    // hugging a wall: start from the body instead
     c.x = player.x;
     c.y = player.y;
   }
@@ -3770,7 +4229,7 @@ void stepCan(Can c, float h) {
   float r = CAN_FLOOR + 2;
   c.vz -= GRAVITY * h;
   float nx = c.x + c.vx * h;
-  if (isWall(cellOf(nx + (c.vx > 0 ? r : -r)), cellOf(c.y))) {
+  if (hitsWall(nx, c.y, r)) {
     canHit(c, abs(c.vx));
     c.vx *= -0.45;
     c.vy *= 0.8;
@@ -3779,7 +4238,7 @@ void stepCan(Can c, float h) {
     c.x = nx;
   }
   float ny = c.y + c.vy * h;
-  if (isWall(cellOf(c.x), cellOf(ny + (c.vy > 0 ? r : -r)))) {
+  if (hitsWall(c.x, ny, r)) {
     canHit(c, abs(c.vy));
     c.vy *= -0.45;
     c.vx *= 0.8;
@@ -3857,7 +4316,7 @@ void drawCans3D() {
   for (Can c : cans) {
     float dd = dist(player.x, player.y, c.x, c.y);
     if (dd > CELL * 6) continue;
-    itemLights(c.x, c.y, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5) * 0.7);   // white metal: keep the flashlight from blowing it out
+    itemLights(c.x, c.y, c.z, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5) * 0.7);   // white metal: keep the flashlight from blowing it out
     pushMatrix();
     translate(c.x, c.y, c.z);
     rotateZ(c.heading);
@@ -3969,20 +4428,23 @@ AudioSample[] makeClanks() {
 }
 
 // the cell someone moving from (x,y) with velocity (vx,vy) will be in ~1.2 s later, stopping at walls
+// Predict along the actual walkable floor, stopping the player's body before a wall.
 int[] predictFrom(float x, float y, float vx, float vy) {
   float sp = sqrt(vx * vx + vy * vy);
   if (sp < 60) return null;
-  float ux = vx / sp, uy = vy / sp;
-  float reach = min(sp * 1.2, CELL * 3);
-  int bi = -1, bj = -1;
-  for (float s = CELL * 0.5; s <= reach; s += CELL * 0.25) {
-    int i = cellOf(x + ux * s), j = cellOf(y + uy * s);
-    if (isWall(i, j)) break;
-    bi = i;
-    bj = j;
+  float ux = vx / sp, uy = vy / sp, reach = min(sp * 1.2, CELL * 3);
+  if (!walkableSegment(x, y, x + ux * reach, y + uy * reach, PLAYER_R)) {
+    float low = 0, high = reach;
+    for (int k = 0; k < 10; k++) {
+      float mid = (low + high) * 0.5;
+      if (walkableSegment(x, y, x + ux * mid, y + uy * mid, PLAYER_R)) low = mid;
+      else high = mid;
+    }
+    reach = low;
   }
-  if (bi < 0 || (bi == cellOf(x) && bj == cellOf(y))) return null;
-  return new int[]{bi, bj};
+  int i = cellOf(x + ux * reach), j = cellOf(y + uy * reach);
+  if (isWall(i, j) || (i == cellOf(x) && j == cellOf(y))) return null;
+  return new int[]{i, j};
 }
 
 int[] predictCell() { return predictFrom(player.x, player.y, pvx, pvy); }
@@ -4008,6 +4470,7 @@ void teleport(Enemy e) {
   if (cand.isEmpty()) return;
   int[] c = cand.get((int) random(cand.size()));
   e.pos.set((c[0] + 0.5) * CELL, (c[1] + 0.5) * CELL);
+  e.navFlow = null;
   if (millis() < ghostUntil) {
     e.ai = WANDER;
     pickWander(e);
@@ -4022,16 +4485,30 @@ void teleport(Enemy e) {
 }
 
 boolean lineOfSight(float x0, float y0, float x1, float y1) {
-  int n = max(1, ceil(dist(x0, y0, x1, y1) / (CELL * 0.2)));
-  for (int k = 1; k < n; k++) {
-    float t = k / (float) n;
-    if (isWall(cellOf(lerp(x0, x1, t)), cellOf(lerp(y0, y1, t)))) return false;
+  int i = cellOf(x0), j = cellOf(y0), ei = cellOf(x1), ej = cellOf(y1);
+  if (isWall(i, j) || isWall(ei, ej)) return false;
+  float dx = x1 - x0, dy = y1 - y0;
+  int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0;
+  int sy = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+  float tx = sx == 0 ? Float.POSITIVE_INFINITY : (((sx > 0 ? i + 1 : i) * CELL) - x0) / dx;
+  float ty = sy == 0 ? Float.POSITIVE_INFINITY : (((sy > 0 ? j + 1 : j) * CELL) - y0) / dy;
+  float stepX = sx == 0 ? Float.POSITIVE_INFINITY : CELL / abs(dx);
+  float stepY = sy == 0 ? Float.POSITIVE_INFINITY : CELL / abs(dy);
+  for (int guard = 0; guard < GRID * 2 + 2; guard++) {
+    if (wallRayInCell(i, j, x0, y0, x1, y1)) return false;
+    if (i == ei && j == ej) return true;
+    if (abs(tx - ty) < 0.000001) {
+      if (isWall(i + sx, j) || isWall(i, j + sy)) return false;
+      i += sx; j += sy; tx += stepX; ty += stepY;
+    } else if (tx < ty) { i += sx; tx += stepX; }
+    else { j += sy; ty += stepY; }
+    if (isWall(i, j)) return false;
   }
-  return true;
+  return false;
 }
 
 void setGoal(Enemy e, int gi, int gj) {
-  if (gi == e.goalI && gj == e.goalJ) return;
+  if (gi == e.goalI && gj == e.goalJ && e.goalFlow != null) return;
   e.goalI = gi;
   e.goalJ = gj;
   e.goalFlow = bfs(gi, gj);
@@ -4092,7 +4569,7 @@ int[][] bfs(int si, int sj) {
     int i = qi[head], j = qj[head++];
     for (int[] d : DIRS) {
       int ni = i + d[0], nj = j + d[1];
-      if (!isWall(ni, nj) && f[ni][nj] < 0) {
+      if (canStep(i, j, ni, nj) && f[ni][nj] < 0) {
         f[ni][nj] = f[i][j] + 1;
         qi[tail] = ni;
         qj[tail++] = nj;
@@ -4111,17 +4588,21 @@ void updateFlow() {
 }
 
 PVector stepOn(Enemy e, int[][] f, PVector finalPt) {
-  int ei = cellOf(e.pos.x), ej = cellOf(e.pos.y);
-  if (f == null || isWall(ei, ej) || f[ei][ej] <= 0) return finalPt;
-  int bi = ei, bj = ej;
-  for (int[] d : DIRS) {
-    int ni = ei + d[0], nj = ej + d[1];
-    if (!isWall(ni, nj) && f[ni][nj] >= 0 && f[ni][nj] < f[bi][bj]) {
-      bi = ni;
-      bj = nj;
-    }
+  // Chase directly over clear floor; sight alone does not guarantee body clearance.
+  if (walkableSegment(e.pos.x, e.pos.y, finalPt.x, finalPt.y, ENEMY_RADIUS)) {
+    e.navFlow = null;
+    return finalPt;
   }
-  return new PVector((bi + 0.5) * CELL, (bj + 0.5) * CELL);
+  if (e.navFlow != f || e.navRoute.isEmpty()) buildEnemyRoute(e, f, finalPt);
+  while (e.navIndex < e.navRoute.size() && PVector.dist(e.pos, e.navRoute.get(e.navIndex)) < 0.5) e.navIndex++;
+  if (e.navIndex >= e.navRoute.size()) return e.pos.copy();
+  PVector p = e.navRoute.get(e.navIndex);
+  if (!walkableSegment(e.pos.x, e.pos.y, p.x, p.y, ENEMY_RADIUS)) {
+    buildEnemyRoute(e, f, finalPt);
+    if (e.navRoute.isEmpty()) return e.pos.copy();
+    p = e.navRoute.get(0);
+  }
+  return p;
 }
 
 float danger(float d) {
@@ -4147,16 +4628,19 @@ float lampPower(int i, int j) {
     e = max(e, constrain(1 - dist(cx, cy, en.pos.x, en.pos.y) / radius, 0, 1));
   }
   if (e > 0 && noise(i * 3.1 + 40, j * 5.7, ms * 0.015) < e * 0.85) p *= 0.06;
-  return p;
+  return p * fixturePower(i, j);
 }
 
 void updateLampGrid() {
   java.util.Arrays.fill(mapU, 0);
+  java.util.Arrays.fill(wallU, 0);
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
     lampP[i][j] = solid[i][j] ? 0 : lampPower(i, j);
     int code = solid[i][j] ? 0 : 1 + round(lampP[i][j] * 15);
     int idx = j * GRID + i;
     mapU[idx / 4] += code * PACK[idx % 4];
+    int edges = (hasWallX(i + 1, j) ? 1 : 0) + (hasWallY(i, j + 1) ? 2 : 0);
+    wallU[idx / 8] += edges * (1 << (2 * (idx % 8)));
   }
   humLevel = 0;
   float acc = 0;
@@ -4165,28 +4649,20 @@ void updateLampGrid() {
     if (isWall(i, j)) continue;
     float dd = dist(player.x, player.y, (i + 0.5) * CELL, (j + 0.5) * CELL);
     humLevel = max(humLevel, lampP[i][j] * constrain(1 - dd / (CELL * 2), 0, 1));
-    acc += lampP[i][j] * constrain(1 - dd / (CELL * 1.6), 0, 1);
+    if (lineOfSight(player.x, player.y, (i + 0.5) * CELL, (j + 0.5) * CELL)) acc += lampP[i][j] * constrain(1 - dd / (CELL * 1.6), 0, 1);
   }
   localLight = constrain(acc * 0.7, 0, 1.2);
+  float lit = 0, nominal = 0;
+  for (int i = pi - 2; i <= pi + 2; i++) for (int j = pj - 2; j <= pj + 2; j++) {
+    if (isWall(i, j) || lampType[i][j] == 2) continue;
+    lit += lampP[i][j];
+    nominal += (lampType[i][j] == 1 ? 0.7 : 1) * fixturePower(i, j);
+  }
+  giLive = lerp(giLive, nominal > 0 ? constrain(lit / nominal, 0, 1) : 1, 0.2);
+  updateDynamicGI(false);
 }
 
-void updateVoices() {
-  int now = millis();
-  for (Enemy e : enemies) {
-    float d = dist(player.x, player.y, e.pos.x, e.pos.y);
-    int path = enemyPath(e);
-    float heard = path < 999 ? max(d, path * CELL * 0.8) : d;
-    float range = e.ch == T_GUSTAVO ? CELL * 20 : CELL * 14;
-    float gain = map(constrain(heard, 0, range), 0, range, 3, -40);
-    if (e.ch == T_GUSTAVO) gain += 6;
-    if (e.ai != CHASE) gain -= 3;
-    if (now < e.screamUntil) gain += 6;
-    if (now < e.stunUntil) gain -= 10;
-    if (hiddenThreat(e)) gain = -80;
-    float ang = atan2(e.pos.y - player.y, e.pos.x - player.x) - yaw;
-    setVoice(voices[e.ch], min(gain, 6) + volDb(V_VOICE), sin(ang));
-  }
-}
+
 
 void setVoice(Controller v, float gain, float pan) {
   if (v.hasControl(Controller.GAIN)) v.setGain(gain);
@@ -4197,43 +4673,25 @@ void setVoice(Controller v, float gain, float pan) {
 // =====================================================================
 // RENDER
 void render() {
+  advanceGIBake();
   float dg = danger(threatD);
   float pulse = kickEnv * chaseLvl;
   float dgV = max(dg, chaseLvl * 0.4);
   background(9, 8, 4);
 
-  float ht = millis() * 0.0004;
-  float yawR = yaw + (noise(ht, 3.1) - 0.5) * 0.014 * HANDHELD;
-  float pitchR = pitch + (noise(ht, 7.7) - 0.5) * 0.010 * HANDHELD;
-
-  float fx = cos(yawR), fy = sin(yawR), rx = -fy, ry = fx;
-  float shake = sq(dgV) * 6 + pulse * 5;
-  float sway = cos(bobPhase) * (crouching ? 2 : 4);
-  float ex = player.x + rx * sway + random(-shake, shake);
-  float ey = player.y + ry * sway + random(-shake, shake);
-  float ez = eyeH - abs(sin(bobPhase)) * (crouching ? 3 : 7);
-  float peekE = peekAmt * peekAmt * (3 - 2 * peekAmt);
-  // the torso tilts at the hips: the head swings out on an arc and drops a little
-  float arm = leanArm(), side = peekOff.mag();
-  float tilt = asin(constrain(side / arm, 0, 1)) * peekE;
-  if (side > 0) {
-    ex += peekOff.x / side * arm * sin(tilt);
-    ey += peekOff.y / side * arm * sin(tilt);
-    ez -= arm * (1 - cos(tilt));
-  }
-  float rollR = roll - peekDir * PEEK_ROLL * tilt / PEEK_ANGLE;   // roll > 0 tilts the head left
+  float ex = camX, ey = camY, ez = camZ;
+  float lx = camDX, ly = camDY, lz = camDZ;
+  float rx = cameraRightX, ry = cameraRightY;
+  float rollR = cameraRoll;
 
   // the lens pass zooms the center in by 'fe': widen the field of view to keep the same framing
   float aspectR = float(width) / height;
   float fe = 1 + LENS_FISHEYE * 0.25 * (aspectR * aspectR + 1);
   perspective(2 * atan(tan((fov - pulse * radians(2.5)) / 2) * fe), aspectR, 10, CELL * GRID * 1.5);
-  float lx = cos(yawR) * cos(pitchR), ly = sin(yawR) * cos(pitchR), lz = sin(pitchR);
   camera(ex, ey, ez, ex + lx, ey + ly, ez + lz, rx * sin(rollR), ry * sin(rollR), -cos(rollR));
-  camX = ex; camY = ey; camZ = ez;
-  camDX = lx; camDY = ly; camDZ = lz;
 
   for (Enemy e : enemies) {
-    PVector sp = lensWarp(screenX(e.pos.x, e.pos.y, 190), screenY(e.pos.x, e.pos.y, 190));
+    PVector sp = lensWarp(screenX(e.pos.x, e.pos.y, 135), screenY(e.pos.x, e.pos.y, 135));
     e.sx = sp.x;
     e.sy = sp.y;
     e.inFront = (e.pos.x - ex) * lx + (e.pos.y - ey) * ly > 0;
@@ -4254,20 +4712,36 @@ void render() {
   world.set("camRight", xAx.x, xAx.y, xAx.z);
   world.set("camUp", yAx.x, yAx.y, yAx.z);
   world.set("mapData", mapU, 4);
+  world.set("giMap", giTex);
+  world.set("wallGIMap", wallGI);
+  world.set("giDynamic", giDynamic);
+  world.set("giSize", (float)giSize);
+  world.set("giWallSize", (float)giWallSize);
+  world.set("wallData", wallU, 4);
   world.set("gridSize", (float) GRID);
   world.set("cellSize", CELL);
   world.set("wallH", WALL_H);
-  world.set("lampZ", WALL_H - 25);
+  world.set("wallHalf", WALL_THICKNESS / 2);
+  world.set("lampZ", WALL_H - 3);
   world.set("exposure", EXPOSURE_BASE * exposureAdapt);
   world.set("fogDist", FOG_DIST);
-  world.set("fogColor", 0.016 * haze, 0.013 * haze, 0.007 * haze);
+  world.set("fogColor", 0.075 * haze, 0.068 * haze, 0.045 * haze);
   world.set("volOn", VOLUMETRIC ? 1.0 : 0.0);
-  world.set("flash", flashlightOn ? 2.5 * flicker : 0.0);
-  world.set("glow", 0.22 * flicker);
+  world.set("wetDebug", SHOW_WET_MASK ? 1.0 : 0.0);
+  float fl = flashlightStrength();
+  world.set("flash", FLASH_POWER * fl);
+  world.set("flashPos", flashPos.x, flashPos.y, flashPos.z);
+  world.set("flashDir", flashDir.x, flashDir.y, flashDir.z);
+  world.set("flashCol", FLASH_COLOR.x, FLASH_COLOR.y, FLASH_COLOR.z);
+  world.set("flashRange", FLASH_RANGE);
+  world.set("flashFalloff", FLASH_FALLOFF);
+  world.set("flashCone", FLASH_OUTER_COS, FLASH_INNER_COS);
   world.set("emissive", 0.0);
 
   textureWrap(REPEAT);
-  shape(level);
+  world.set("wallpaper", 1.0);
+  drawVisibleLevel(g, xAx, yAx, tan((fov - pulse * radians(2.5)) / 2) * fe, aspectR);
+  world.set("wallpaper", 0.0);
   drawDecals();
   drawArrows();
   drawExit();
@@ -4281,12 +4755,15 @@ void render() {
   drawPizzas();
   drawXray();
   drawViewModel3D();
+  meterCamera(g);
 
   begin2D();
   applyLens();                       // 1. the player's eye: fish-eye, grain, micro-blur
-  drawOverlay(dgV, pulse);           // 2. camcorder overlay + on-screen text
-  applyPost(dgV, spotFlash * 0.5);   // 3. the camcorder itself
-  drawHUD();                         // 4. gameplay HUD on top
+  drawOverlay(dgV, pulse);          // 2. view effects and fade-in
+  applyTape();                      // 3. recording signal
+  drawCamOsd(dgV);                  // 4. crisp character generator
+  applyPost(dgV, spotFlash * 0.5);   // 4. tape faults and camera exposure noise
+  drawHUD();                        // 5. gameplay HUD on top
   end2D();
 }
 
@@ -4314,28 +4791,38 @@ PVector lensWarp(float x, float y) {
 }
 
 void drawPanels() {
-  world.set("emissive", 2.4);
-  textureWrap(CLAMP);
-  noStroke();
-  int pi = cellOf(player.x), pj = cellOf(player.y);
-  float z = WALL_H - 5, hw = CELL * 0.28, hh = CELL * 0.14;
-  for (int i = max(0, pi - 6); i <= min(GRID - 1, pi + 6); i++) {
-    for (int j = max(0, pj - 6); j <= min(GRID - 1, pj + 6); j++) {
+  drawPanels(g);
+}
+
+// Batch emitters separately from ordinary plastic so each draw uses the right
+// shader state. The same path also supports offscreen renderer verification.
+void drawPanels(PGraphics target) {
+  target.textureWrap(CLAMP);
+  target.noStroke();
+  world.set("wallpaper",0.0); // preserve diffuser albedo rather than roof.jpg calibration
+  int pi=cellOf(player.x),pj=cellOf(player.y);
+  float z=WALL_H-2,hw=CELL/12,hh=CELL/12;
+  for (int pass=0;pass<2;pass++) {
+    world.set("emissive",pass==0?2.4:0.0);
+    for (int i=max(0,pi-6);i<=min(GRID-1,pi+6);i++) for (int j=max(0,pj-6);j<=min(GRID-1,pj+6);j++) {
       if (solid[i][j]) continue;
-      float p = lampP[i][j];
-      float cx = (i + 0.5) * CELL, cy = (j + 0.5) * CELL;
-      tint(lerp(12, 255, p), lerp(11, 245, p), lerp(9, 205, p));
-      beginShape(QUADS);
-      texture(panelTex);
-      vertex(cx - hw, cy - hh, z, 0, 0);
-      vertex(cx + hw, cy - hh, z, 1, 0);
-      vertex(cx + hw, cy + hh, z, 1, 1);
-      vertex(cx - hw, cy + hh, z, 0, 1);
-      endShape();
+      float p=lampP[i][j];
+      boolean dead=p<0.08;
+      if (dead!=(pass==1)) continue;
+      if (dead) target.tint(232,228,214);
+      else {
+        float emission=pow(p,1.0/2.2);
+        target.tint(lerp(12,255,emission),lerp(11,245,emission),lerp(9,205,emission));
+      }
+      float cx=(i+0.5)*CELL,cy=(j+0.5)*CELL;
+      target.beginShape(QUADS);target.texture(panelTex);
+      target.vertex(cx-hw,cy-hh,z,0,0);target.vertex(cx+hw,cy-hh,z,1,0);
+      target.vertex(cx+hw,cy+hh,z,1,1);target.vertex(cx-hw,cy+hh,z,0,1);
+      target.endShape();
     }
+    target.flush(); // uniform changes must not reach geometry queued by the preceding pass
   }
-  noTint();
-  flush();
+  target.noTint();
 }
 
 void drawEnemy(Enemy e) {
@@ -4343,17 +4830,15 @@ void drawEnemy(Enemy e) {
   if (d > CELL * 12) return;
   float dg = danger(d);
   boolean stunned = millis() < e.stunUntil;
-  float s = 300;
-  float base = 40;
+  float s = 220;
+  float base = 25;
   float glitch = stunned ? 35 : 60 * sq(max(dg, chaseLvl * 0.5));
   int strips = 14;
 
   world.set("emissive", stunned ? 0.6 : 0.18 + 0.25 * dg + 0.15 * chaseLvl);
   textureWrap(CLAMP);
   noStroke();
-  float away = constrain((abs(angleDiff(e.face, atan2(player.y - e.pos.y, player.x - e.pos.x))) - VIEW_HALF) / 0.5, 0, 1);
   if (stunned) tint(130, 180, 255);
-  else if (away > 0) tint(lerp(255, 105, away), lerp(255, 100, away), lerp(255, 95, away));
   else noTint();
   pushMatrix();
   translate(e.pos.x, e.pos.y, 0);
@@ -4393,6 +4878,7 @@ void end2D() {
 
 void applyPost(float dg, float hit) {
   post.set("time", millis() / 1000.0);
+  post.set("footage", state == PLAYING ? 1.0 : 0.0);
   post.set("danger", dg);
   post.set("hit", hit);
   post.set("gain", state == PLAYING ? camGain : 0.3);
@@ -4485,7 +4971,7 @@ void drawParticles() {
 }
 
 // =====================================================================
-// OVERLAY (before the camera filter): screen effects + the camcorder's own on-screen display
+// VIEW EFFECTS (before tape); the camcorder character generator follows tape
 void drawOverlay(float dg, float pulse) {
   rectMode(CORNER);
   noStroke();
@@ -4516,6 +5002,11 @@ void drawOverlay(float dg, float pulse) {
     rect(0, 0, width, height);
   }
 
+}
+
+// The character generator follows the tape bandwidth filter, before final noise.
+void drawCamOsd(float dg) {
+  pushStyle(); rectMode(CORNER);
   // viewfinder corners
   float m = 40, L = 46;
   stroke(255, 140);
@@ -4546,6 +5037,7 @@ void drawOverlay(float dg, float pulse) {
   drawBattery(width - 118, height - 84, dg);
 
   drawOsd();
+  popStyle();
 }
 
 // camcorder-style text: white with a soft drop shadow, part of the image
@@ -4695,7 +5187,7 @@ void drawHUD() {
   line(cx, cy + 4, cx, cy + 9);
   noStroke();
 
-  drawEye(width / 2, 86);
+  drawEyes(width / 2, 80);
 
   if (gameMode == FUGA && nearCert >= 0) {
     textFont(fontHud);
@@ -4759,7 +5251,7 @@ void drawHUD() {
       textFont(fontMono);
       textSize(15);
       fill(200, a);
-      text("SHIFT CORRER   C AGACHAR   1-5 COMER/BEBER   Q TASER   G LATA   Q/E NA QUINA ESPREITAR   ESC PAUSA", width / 2, height / 2 - 88);
+      text("SHIFT CORRER   C AGACHAR   1-5 COMER/BEBER   R TASER   G LATA   Q/E NA QUINA ESPREITAR   ESC PAUSA", width / 2, height / 2 - 88);
     }
   }
 
@@ -4767,140 +5259,7 @@ void drawHUD() {
 }
 
 // The Eye: shows the most alarming state among the nerdolas (Isa only once she's close)
-void drawEye(float cx, float cy) {
-  int now = millis();
-  boolean huntingAny = false, chaseAny = false, stunnedAny = false, confusedAny = false, searchAny = false;
-  for (Enemy e : enemies) {
-    boolean hidden = hiddenThreat(e);
-    if (now < e.stunUntil) {
-      if (!hidden) stunnedAny = true;
-      continue;
-    }
-    if (e.ai == CHASE && e.sees) huntingAny = true;
-    if (hidden) continue;
-    if (e.ai == CHASE) chaseAny = true;
-    if (now < e.confusedUntil) confusedAny = true;
-    if (e.ai == SEARCH) searchAny = true;
-  }
-  float target = 0, lx = 0, ly = 0, shake = 0;
-  int iris = color(120);
-  boolean veins = false;
-  if (survived < graceTime) {
-    target = 0;
-  } else if (huntingAny) {
-    target = 1;
-    iris = color(190, 15, 10);
-    shake = 2.5;
-    veins = true;
-  } else if (chaseAny) {
-    target = 0.8;
-    iris = color(190, 80, 15);
-    lx = sin(now * 0.005) * 0.35;
-    veins = true;
-  } else if (stunnedAny) {
-    target = 0.6;
-    iris = color(80, 160, 255);
-    lx = cos(now * 0.025) * 0.75;
-    ly = sin(now * 0.025) * 0.5;
-    shake = 3;
-    veins = true;
-  } else if (confusedAny) {
-    target = 0.45;
-    iris = color(110, 150, 210);
-    lx = cos(now * 0.004) * 0.8;
-    ly = sin(now * 0.0052) * 0.5;
-  } else if (searchAny) {
-    target = 0.5;
-    iris = color(180, 140, 40);
-    lx = ((now / 650) % 2 == 0) ? -0.8 : 0.8;
-    ly = ((now / 1300) % 2 == 0) ? 0.2 : -0.1;
-  }
-  if (target > 0 && now > nextBlink) {
-    blinkUntil = now + 120;
-    nextBlink = now + (int) random(1600, 4200);
-  }
-  if (now < blinkUntil && !huntingAny) target = 0;
-  eyeOpen = lerp(eyeOpen, target, 1 - exp(-frameDt * 16));
-  eyeLX = lerp(eyeLX, lx, 1 - exp(-frameDt * 12));
-  eyeLY = lerp(eyeLY, ly, 1 - exp(-frameDt * 12));
 
-  float w = 112, h = 30;
-  pushMatrix();
-  translate(cx + random(-shake, shake), cy + random(-shake, shake));
-  float op = eyeOpen * h;
-  if (op > 1.5) {
-    noStroke();
-    fill(huntingAny ? color(225, 200, 185) : color(200, 195, 180));
-    eyeShape(w, op);
-    if (veins) {
-      stroke(150, 15, 15, 200);
-      strokeWeight(1.4);
-      for (int k = 0; k < 6; k++) {
-        float side = k < 3 ? -1 : 1;
-        float x0 = side * w * 0.46, y0 = (k % 3 - 1) * op * 0.25;
-        float x1 = side * w * 0.2, y1 = y0 * 0.4 + (noise(k, now * 0.001) - 0.5) * 6;
-        float mx = (x0 + x1) / 2, my = (y0 + y1) / 2 + (k % 2 == 0 ? 3 : -3);
-        line(x0, y0, mx, my);
-        line(mx, my, x1, y1);
-      }
-      noStroke();
-    }
-    float r = h * 0.72;
-    float ix = eyeLX * w * 0.15, iy = eyeLY * op * 0.3;
-    float ih = min(r * 2, op * 1.7);
-    fill(iris);
-    ellipse(ix, iy, r * 2, ih);
-    float pr = huntingAny ? r * (0.35 + 0.15 * abs(sin(now * 0.02))) : r * 0.75;
-    fill(5);
-    ellipse(ix, iy, pr, min(pr, ih * 0.9));
-    fill(240, 200);
-    rect(ix + r * 0.25, iy - ih * 0.3, 4, 4);
-    noFill();
-    stroke(8);
-    strokeWeight(5);
-    eyeShape(w, op);
-    strokeWeight(3);
-    for (int k = 0; k < 7; k++) {
-      float t = (k + 1) / 8.0;
-      float x = lerp(-w / 2, w / 2, t);
-      float y = -3.9 * op * t * (1 - t);
-      line(x, y, x * 1.08, y - 9);
-    }
-    noStroke();
-  } else {
-    noFill();
-    for (int pass = 0; pass < 2; pass++) {
-      stroke(pass == 0 ? color(10, 200) : color(215, 205, 185));
-      strokeWeight(pass == 0 ? 9 : 4);
-      bezier(-w / 2, 0, -w / 4, 10, w / 4, 10, w / 2, 0);
-      strokeWeight(pass == 0 ? 6 : 2.5);
-      for (int k = 0; k < 7; k++) {
-        float t = (k + 1) / 8.0;
-        float x = lerp(-w / 2, w / 2, t);
-        float y = 30 * t * (1 - t);
-        line(x, y, x * 1.05, y + 9);
-      }
-    }
-    noStroke();
-  }
-  popMatrix();
-
-  String sub = "";
-  if (crouching) sub = "AGACHADO";
-  if (peekSide != 0) sub = sub.length() > 0 ? sub + " / ESPREITANDO" : "ESPREITANDO";
-  if (!flashlightOn && playerExpo < 0.2) sub = sub.length() > 0 ? sub + " / NAS SOMBRAS" : "NAS SOMBRAS";
-  if (now < ghostUntil) sub = sub.length() > 0 ? sub + " / INVISÍVEL" : "INVISÍVEL";
-  if (sub.length() > 0) {
-    textFont(fontMono);
-    textSize(12);
-    float tw = textWidth(sub);
-    fill(0, 170);
-    rect(cx - tw / 2 - 8, cy + h + 16, tw + 16, 20);
-    fill(220);
-    textAlign(CENTER, CENTER);
-    text(sub, cx, cy + h + 25);
-  }
-}
 
 void drawStamina() {
   int now = millis();
@@ -4924,49 +5283,72 @@ void drawStamina() {
     }
     rect(bx + k * (sw + gap), by, sw, 10);
   }
-  textFont(fontMono);
-  textSize(11);
-  fill(150);
-  textAlign(RIGHT, CENTER);
-  text("FÔLEGO", bx - 16, by + 5);
 }
 
 void drawInventory() {
-  // only what you're carrying (plus the one in your hands while you use it), packed and centered
-  ArrayList<Integer> shown = new ArrayList<Integer>();
-  for (int k = 0; k < ITEM_NAMES.length; k++) if (inv[k] > 0 || useType == k) shown.add(k);
-  float slot = 72, x0 = width / 2 - slot * shown.size() / 2.0, y = height - 160;
+  int now = millis();
+  syncSlots();
+  ArrayList<Integer> shown = new ArrayList<Integer>(slotOrder);
+  if (inv[LATA] > 0) shown.add(LATA);
+  if (inv[TASER] > 0) shown.add(TASER);
+  float slot = 72, sz = 64, y = height - 160;
+  int n = shown.size();
+  for (int k = 0; k < ITEM_NAMES.length; k++) {
+    int idx = shown.indexOf(k);
+    boolean on = idx >= 0;
+    if (inv[k] > lastInv[k]) slotPop[k] = 1;
+    lastInv[k] = inv[k];
+    slotPop[k] *= exp(-frameDt * 7);
+    if (on) {
+      float tx = width / 2 + (idx - (n - 1) / 2.0) * slot;
+      if (slotShow[k] < 0.02) slotX[k] = tx;
+      slotX[k] = lerp(slotX[k], tx, 1 - exp(-frameDt * 12));
+      slotKey[k] = keyFor(k);
+    }
+    slotShow[k] = lerp(slotShow[k], on ? 1 : 0, 1 - exp(-frameDt * (on ? 10 : 7)));
+  }
+
+  rectMode(CENTER);
   imageMode(CENTER);
-  for (int n = 0; n < shown.size(); n++) {
-    int k = shown.get(n);
-    float x = x0 + n * slot + 4, sz = slot - 8;
-    boolean has = inv[k] > 0;
+  for (int k = 0; k < ITEM_NAMES.length; k++) {
+    float a = slotShow[k];
+    if (a < 0.02) continue;
+    float s = sz * (0.6 + 0.4 * a) * (1 + 0.18 * slotPop[k]);
+    float x = slotX[k], cy = y + sz / 2 + (1 - a) * 24;
     noStroke();
-    fill(0, has ? 215 : 140);
-    rect(x, y, sz, sz);
-    stroke(useType == k ? color(200, 30, 20) : (has ? color(200, 190, 160) : color(60)));
+    fill(0, 215 * a);
+    rect(x, cy, s, s);
+    stroke(useType == k ? color(200, 30, 20, 255 * a) : color(200, 190, 160, 255 * a));
     strokeWeight(3);
     noFill();
-    rect(x, y, sz, sz);
+    rect(x, cy, s, s);
     noStroke();
-    tint(has ? 255 : 70);
-    image(itemTex[k], x + sz / 2, y + sz / 2 + 2, 50, 50);
+    if (useType == k) {
+      float t = constrain((now - useStart) / (float) USE_MS[k], 0, 1);
+      fill(200, 30, 20, 200 * a);
+      rect(x - s / 2 + s * t / 2, cy + s / 2 - 3, s * t, 4);
+    }
+    tint(255, 255 * a);
+    image(itemTex[k], x, cy + 2, s * 0.78, s * 0.78);
     noTint();
-    fill(has ? color(225, 215, 180) : color(70));
-    rect(x, y, 17, 17);
-    fill(0);
-    textFont(fontMono);
-    textSize(12);
-    textAlign(CENTER, CENTER);
-    text(ITEM_KEYS[k], x + 8.5, y + 7.5);
-    if (has) {
+    if (slotKey[k].length() > 0) {
+      fill(225, 215, 180, 255 * a);
+      rect(x - s / 2 + 8.5, cy - s / 2 + 8.5, 17, 17);
+      fill(0, 255 * a);
+      textFont(fontMono);
+      textSize(12);
+      textAlign(CENTER, CENTER);
+      text(slotKey[k], x - s / 2 + 8.5, cy - s / 2 + 7.5);
+    }
+    if (inv[k] > 0) {
       textFont(fontHud);
       textSize(17);
-      fill(235);
+      fill(235, 255 * a);
       textAlign(RIGHT, BOTTOM);
-      text("x" + inv[k], x + sz - 4, y + sz + 1);
+      text("x" + inv[k], x + s / 2 - 4, cy + s / 2 + 1);
     }
   }
+  rectMode(CORNER);
   imageMode(CORNER);
 }
 
@@ -5349,7 +5731,7 @@ void drawMenuPreview() {
   else if (menuSel == 4) drawAchPreview();
   else drawExitPreview();
   popMatrix();
-  if (k < 1) drawSwitchStatic(width * 0.42, 0, width * 0.58, height, 1 - k);
+  //if (k < 1) drawSwitchStatic(width * 0.42, 0, width * 0.58, height, 1 - k);
 }
 
 void previewLabel(String title, String sub) {
@@ -5416,7 +5798,7 @@ void drawLineup() {
     float bright = 255 * pow(0.6, max(p, 0)) * (i == 0 ? menuFlicker : 1);
     float alpha = p < 0 ? 255 * constrain(1 + p, 0, 1) : 255;
     if (chars[k] >= 0) drawLineupFace(chars[k], chars[k], lineX(p), lineY(p), lineS(p), bright, alpha);
-    else drawGroupFace(lineX(p), lineY(p), lineS(p), bright, alpha);
+    else drawVsCard(lineX(p), lineY(p), lineS(p), bright, alpha, i == 0, lineupMode == FUGA ? "VS. 6" : "TODOS");
   }
 
   int ch = chars[sel];
@@ -5501,7 +5883,7 @@ void drawLockedPreview(String title, String hint) {
   fill(25);
   ellipse(x, y + 18, 22, 22);
   rect(x - 5, y + 18, 10, 34);
-  previewLabel(title + "  [BLOQUEADO]", hint);
+  previewLabel(title, hint);
 }
 
 // RECUPERAÇÃO: all six in the dark, a flashlight beam drifting over them
@@ -5898,7 +6280,7 @@ void drawCatItems() {
     textFont(fontMail);
     textSize(16);
     fill(itemSeen[k] ? 200 : 100);
-    text(itemSeen[k] ? ITEM_DESC[k] + "   [" + ITEM_KEYS[k] + "]" : "Pegue esse item para descobrir o que ele faz.", 180, y + 50);
+    text(itemSeen[k] ? ITEM_DESC[k] + (k == TASER ? "   [R]" : k == LATA ? "   [G]" : "   [SLOT 1-5]") : "Pegue esse item para descobrir o que ele faz.", 180, y + 50);
   }
 }
 
@@ -5979,12 +6361,14 @@ void pauseGame() {
   pauseStart = millis();
   pausePage = 0;
   pauseSel = 0;
-  pauseShot = null;
+  pauseShot = get();
   releaseKeys();
   peekSide = 0;
   lockMouse(false);
   silenceSynth();
   pauseVoices();
+  if (flashSnd != null) flashSnd.stop();
+  if (clanks != null) for (AudioSample sample : clanks) sample.stop();
 }
 
 void resumeGame() {
@@ -6001,28 +6385,28 @@ void resumeGame() {
 // everything in the run is timed against millis(): push it all forward by the time spent paused
 void shiftClock(int d) {
   startMs += d;
-  msgUntil += d;
-  blinkUntil += d;
-  nextBlink += d;
+  if (msgUntil > 0) msgUntil += d;
+  shiftEyeClock(mainEye, d);
+  for (Eye e : packEyes) shiftEyeClock(e, d);
   useStart += d;
-  energyUntil += d;
-  swiftUntil += d;
-  ghostUntil += d;
-  fedUntil += d;
-  pilhadoUntil += d;
-  fireUntil += d;
-  flickerUntil += d;
+  if (energyUntil > 0) energyUntil += d;
+  if (swiftUntil > 0) swiftUntil += d;
+  if (ghostUntil > 0) ghostUntil += d;
+  if (fedUntil > 0) fedUntil += d;
+  if (pilhadoUntil > 0) pilhadoUntil += d;
+  if (fireUntil > 0) fireUntil += d;
+  if (flickerUntil > 0) flickerUntil += d;
   lastThrow += d;
   lastStingMs += d;
   toastStart += d;
   for (int k = 0; k < pickupTimes.size(); k++) pickupTimes.set(k, pickupTimes.get(k) + d);
   for (Enemy e : enemies) {
-    e.lockUntil += d;
-    e.lungeUntil += d;
-    e.screamUntil += d;
-    e.stunUntil += d;
-    e.confusedUntil += d;
-    e.nextTeleport += d;
+    if (e.lockUntil > 0) e.lockUntil += d;
+    if (e.lungeUntil > 0) e.lungeUntil += d;
+    if (e.screamUntil > 0) e.screamUntil += d;
+    if (e.stunUntil > 0) e.stunUntil += d;
+    if (e.confusedUntil > 0) e.confusedUntil += d;
+    if (e.nextTeleport > 0) e.nextTeleport += d;
   }
   for (Can c : cans) {
     c.lastClank += d;
@@ -6181,7 +6565,8 @@ void setGainDb(Controller c, float db) {
 // the synth (out), the ambience and the flashlight click; voices and clanks add their offset when played
 void applyVolumes() {
   setGainDb(ambience, volDb(V_AMB));
-  setGainDb(out, volDb(V_FX));
+  fxBus.setValue(volDb(V_FX));
+  voiceBus.setValue(volDb(V_VOICE));
   setGainDb(flashSnd, -4 + volDb(V_FX));
 }
 
@@ -6315,10 +6700,10 @@ void keyPressed() {
     }
     if (kc == 'C') crouchToggle = !crouchToggle;
     if (kc == 'P') pauseGame();
-    if (kc >= '1' && kc <= '4') startUse(kc - '1');
-    if (kc == '5') startUse(MONSTER);
+    if (kc >= '1' && kc <= '5') useSlot(kc - '1');
     if (kc == 'G') throwCan();
-    if (kc == 'Q' && !startPeek(-1)) fireTaser();             // at a left corner Q peeks, elsewhere it's the taser
+    if (kc == 'Q') startPeek(-1);
+    if (kc == 'R') fireTaser();
     if (kc == 'E') {
       if (gameMode == FUGA && nearCert >= 0) collectCert();     // a certificate in reach wins over peeking
       else startPeek(1);
@@ -6389,4 +6774,1348 @@ void setMove(int kc, boolean v) {
 void releaseKeys() {
   java.util.Arrays.fill(keyDown, false);
   kUp = kDown = kLeft = kRight = kSprint = kCrouch = false;
+}
+
+float acousticRefresh;
+int acousticFlowI = -1, acousticFlowJ = -1;
+// Refresh geometry-dependent routes at 10 Hz; voices and footsteps still smooth every frame.
+void refreshAcoustics(float dt) {
+  acousticRefresh -= dt;
+  if (acousticRefresh <= 0 || acousticFlowI != flowI || acousticFlowJ != flowJ) {
+    for (Enemy e : enemies) traceSound(e);
+    acousticRefresh = 0.1;
+    acousticFlowI = flowI; acousticFlowJ = flowJ;
+  }
+  for (Enemy e : enemies) if (e.corners == 0) { e.apX = e.pos.x; e.apY = e.pos.y; }
+}
+void update3DAudio(float dt) {
+  refreshAcoustics(dt);
+  updateVoices(dt);
+  updateEnemySteps(dt);
+  updateDistant(dt);
+  updateEcho(dt);
+  if (ambience.hasControl(Controller.GAIN)) ambience.setGain(volDb(V_AMB) - 10 * chaseLvl);   // the room ducks during a chase
+}
+
+
+void updateVoices(float dt) {
+  int now = millis();
+  for (Enemy e : enemies) {
+    float d = dist(player.x, player.y, e.pos.x, e.pos.y);
+    int path = enemyPath(e);
+    float heard = path < 999 ? max(d, path * CELL * 0.8) : d;   // volume follows the walking route
+    float range = e.ch == T_GUSTAVO ? CELL * 20 : CELL * 14;
+    float gain = map(constrain(heard, 0, range), 0, range, 3, -40);
+    if (e.ch == T_GUSTAVO) gain += 6;
+    if (e.ai != CHASE) gain -= 3;
+    if (now < e.screamUntil) gain += 6;
+    if (now < e.stunUntil) gain -= 10;
+    gain -= 1.5 * e.corners;
+
+    // heard from the opening the sound reaches you through, not through the wall
+    float ang = atan2(e.apY - player.y, e.apX - player.x) - yaw;
+    float front = cos(ang);
+    if (front < 0) gain += 2 * front;                    // a touch quieter behind you
+
+    float cut = CORNER_CUT[min(e.corners, 4)];
+    if (now < e.stunUntil) cut = min(cut, 900);
+
+    if (hiddenThreat(e)) gain = -80;
+    voices[e.ch].set(min(gain, 6), sin(ang), cut, dt);
+  }
+}
+
+
+void updateEnemySteps(float dt) {
+  boolean[] used = new boolean[eSteps.length];
+  for (Enemy e : enemies) {
+    Steps3D s = eSteps[e.ch];
+    used[e.ch] = true;
+    if (e.speedNow > 20) {
+      float before = s.phase;
+      s.phase += dt * e.speedNow / 190.0;
+      if (floor(s.phase) != floor(before)) s.env = 1;
+    }
+    s.env *= exp(-dt * 14);
+    float d = dist(player.x, player.y, e.pos.x, e.pos.y);
+    int path = enemyPath(e);
+    float heard = path < 999 ? max(d, path * CELL * 0.8) : d;
+    float near = constrain(1 - heard / (CELL * 8), 0, 1);
+    float ang = atan2(e.apY - player.y, e.apX - player.x) - yaw;
+    float vol = 0.55 * near * near / (1 + 0.25 * e.corners) * (e.ch == T_GUSTAVO ? 1.2 : 1);
+    if (hiddenThreat(e)) vol = 0;                        // Isa stays silent
+    s.amp.setValue(s.env * vol);
+    s.lp.frequency.setLastValue(STEP_CUT[min(e.corners, 4)]);
+    s.pan.setPan(constrain(sin(ang), -1, 1));
+  }
+  for (int k = 0; k < eSteps.length; k++) if (!used[k]) eSteps[k].amp.setValue(0);
+}
+
+
+void updateDistant(float dt) {
+  if (distType < 0) {
+    if (chaseLvl < 0.3) nextDistant -= dt;
+    if (nextDistant > 0) return;
+    distType = (int) random(2);
+    distT = 0;
+    distVol = random(0.5, 1);
+    distPan.setPan(random(-0.95, 0.95));
+    distO.setWaveform(distType == 1 ? Waves.TRIANGLE : Waves.SINE);
+    nextDistant = random(14, 34);
+  }
+  distT += dt;
+  float oa = 0, na = 0, cut = 300, f = 50, end = 1.5;
+  if (distType == 0) {             // a heavy door slamming far away
+    f = 44 - 10 * min(1, distT);
+    oa = 0.45 * exp(-distT * 5);
+    na = 0.5 * exp(-distT * 10);
+    cut = 280;
+    end = 1.2;
+  } else {                         // someone running, somewhere
+    float ph = (distT / 0.17) % 1;
+    na = 0.45 * exp(-ph * 22) * sin(PI * min(1, distT / 2.2));
+    cut = 230;
+    end = 2.2;
+  }
+  distO.setFrequency(f);
+  distO.setAmplitude(oa * distVol);
+  distNAmp.setValue(na * distVol);
+  distLP.frequency.setLastValue(cut);
+  if (distT > end) {
+    distType = -1;
+    distO.setAmplitude(0);
+    distNAmp.setValue(0);
+  }
+}
+
+
+void updateEcho(float dt) {
+  int pi = cellOf(player.x), pj = cellOf(player.y), opening = 0;
+  for (int i = pi - 2; i <= pi + 2; i++) for (int j = pj - 2; j <= pj + 2; j++) if (!isWall(i, j) && lineOfSight(player.x, player.y, (i + 0.5) * CELL, (j + 0.5) * CELL)) opening++;
+  roomOpen = lerp(roomOpen, opening / 25.0, 1 - exp(-dt * 2));
+  stepEcho.setDelTime(0.09 + 0.22 * roomOpen);
+  stepEcho.setDelAmp(0.2 + 0.35 * roomOpen);
+  echoWet.setValue(0.15 + 0.6 * sq(roomOpen));
+}
+
+
+int openNeighbors(int i, int j) {
+  int n = 0;
+  for (int[] d : DIRS) if (canStep(i, j, i + d[0], j + d[1])) n++;
+  return n;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void syncSlots() {
+  for (int k = slotOrder.size() - 1; k >= 0; k--) {
+    int t = slotOrder.get(k);
+    if (inv[t] <= 0 && useType != t) slotOrder.remove(k);
+  }
+  for (int t = 0; t < ITEM_NAMES.length; t++)
+    if (t != TASER && t != LATA && (inv[t] > 0 || useType == t) && !slotOrder.contains(t)) slotOrder.add(t);
+}
+
+
+String keyFor(int type) {
+  if (type == TASER) return "R";
+  if (type == LATA) return "G";
+  int i = slotOrder.indexOf(type);
+  return i >= 0 ? str(i + 1) : "";
+}
+
+
+void useSlot(int n) {
+  syncSlots();
+  if (n >= 0 && n < slotOrder.size()) startUse(slotOrder.get(n));
+}
+
+
+final float[] CORNER_CUT = {12000, 5000, 2800, 1800, 1300};
+final float[] STEP_CUT = {420, 340, 260, 210, 180};
+void traceSound(Enemy e) {
+  e.apX = e.pos.x;
+  e.apY = e.pos.y;
+  e.corners = 0;
+  if (lineOfSight(player.x, player.y, e.pos.x, e.pos.y)) return;
+  int i = cellOf(e.pos.x), j = cellOf(e.pos.y);
+  if (isWall(i, j) || flow[i][j] < 0 || flow[i][j] > 30) {
+    e.corners = 4;
+    return;
+  }
+  // the route, enemy first, you last
+  ArrayList<PVector> route = new ArrayList<PVector>();
+  route.add(new PVector(e.pos.x, e.pos.y));
+  int guard = 0;
+  while (flow[i][j] > 0 && guard++ < GRID * GRID) {
+    int bi = i, bj = j;
+    for (int[] d : DIRS) {
+      int ni = i + d[0], nj = j + d[1];
+      if (canStep(i, j, ni, nj) && flow[ni][nj] == flow[i][j] - 1) {
+        bi = ni;
+        bj = nj;
+        break;
+      }
+    }
+    if (bi == i && bj == j) break;
+    i = bi;
+    j = bj;
+    route.add(new PVector((i + 0.5) * CELL, (j + 0.5) * CELL));
+  }
+  route.add(new PVector(player.x, player.y));
+
+  // string-pull from your end: every time the line of sight breaks, that's a corner
+  float ax = player.x, ay = player.y;
+  boolean first = true;
+  int k = route.size() - 2;
+  while (k >= 0 && e.corners < 4) {
+    int last = -1;
+    while (k >= 0 && lineOfSight(ax, ay, route.get(k).x, route.get(k).y)) {
+      last = k;
+      k--;
+    }
+    if (k < 0) break;                        // the rest of the route is in view
+    if (last < 0) {                          // safety: always make progress
+      last = k;
+      k--;
+    }
+    PVector c = route.get(last);
+    if (first) {                             // the first corner is where you hear it from
+      e.apX = c.x;
+      e.apY = c.y;
+      first = false;
+    }
+    e.corners++;
+    ax = c.x;
+    ay = c.y;
+  }
+}
+
+
+int eyeModeOf(Enemy e) {
+  int now = millis();
+  if (survived < graceTime) return 0;
+  boolean hidden = hiddenThreat(e);
+  if (now < e.stunUntil) return hidden ? 0 : 3;
+  if (e.ai == CHASE && e.sees) return 1;
+  if (hidden) return 0;
+  if (e.ai == CHASE) return 2;
+  if (now < e.confusedUntil) return 4;
+  if (e.ai == SEARCH) return 5;
+  return 0;
+}
+
+
+int eyeModeAll() {
+  int best = 0;
+  for (Enemy e : enemies) {
+    int m = eyeModeOf(e);
+    if (EYE_RANK[m] > EYE_RANK[best]) best = m;
+  }
+  return best;
+}
+
+
+Enemy enemyOf(int ch) {
+  for (Enemy e : enemies) if (e.ch == ch) return e;
+  return null;
+}
+
+
+void drawEyes(float cx, float cy) {
+  float lowest = 30 * EYE_SCALE;
+  if (enemies.size() <= 1) {
+    renderEye(mainEye, eyeModeAll(), cx, cy, EYE_SCALE, false);
+  } else {
+    float gap = 18, total = 0;
+    int shown = 0;
+    for (Enemy e : enemies) {
+      Eye ey = packEyes[e.ch];
+      int m = eyeModeOf(e);
+      boolean on = m == 1 || m == 2 || m == 3 || m == 5;
+      ey.show = lerp(ey.show, on ? 1 : 0, 1 - exp(-frameDt * (on ? 9 : 4)));
+      float close = constrain(1 - (enemyPath(e) - 1) / 14.0, 0, 1);
+      ey.sc = lerp(ey.sc, EYE_SCALE * lerp(0.55, 1.3, close), 1 - exp(-frameDt * 4));
+      if (ey.show > 0.02) {
+        total += 112 * ey.sc * ey.show + gap;
+        shown++;
+      }
+    }
+    if (shown == 0) {
+      renderEye(mainEye, 0, cx, cy, EYE_SCALE, true);
+    } else {
+      float x = cx - (total - gap) / 2;
+      for (int ch = 0; ch < 6; ch++) {                 // fixed order: eyes never swap places
+        Enemy e = enemyOf(ch);
+        if (e == null) continue;
+        Eye ey = packEyes[ch];
+        if (ey.show <= 0.02) {
+          ey.x = -1;
+          continue;
+        }
+        float s = ey.sc * ey.show;
+        float tx = x + 56 * s;
+        ey.x = ey.x < 0 ? tx : lerp(ey.x, tx, 1 - exp(-frameDt * 8));
+        x += 112 * s + gap;
+        int m = eyeModeOf(e);
+        boolean on = m == 1 || m == 2 || m == 3 || m == 5;
+        renderEye(ey, on ? m : 0, ey.x, cy, s, true);
+        lowest = max(lowest, 30 * s);
+      }
+    }
+  }
+
+  String sub = "";
+  if (crouching) sub = "AGACHADO";
+  if (millis() < ghostUntil) sub = sub.length() > 0 ? sub + " / INVISÍVEL" : "INVISÍVEL";
+  if (sub.length() > 0) {
+    textFont(fontMono);
+    textSize(12);
+    float tw = textWidth(sub), lb = cy + lowest + 14;
+    noStroke();
+    fill(0, 170);
+    rect(cx - tw / 2 - 8, lb, tw + 16, 20);
+    fill(220);
+    textAlign(CENTER, CENTER);
+    text(sub, cx, lb + 9);
+  }
+}
+
+
+void renderEye(Eye ey, int mode, float cx, float cy, float sc, boolean alive) {
+  int now = millis();
+  boolean hunting = mode == 1;
+  float target = 0, lx = 0, ly = 0, shake = 0;
+  int iris = color(120);
+  boolean veins = false;
+  if (mode == 1) {
+    target = 1;
+    iris = color(190, 15, 10);
+    shake = 2.5;
+    veins = true;
+  } else if (mode == 2) {
+    target = 0.8;
+    iris = color(190, 80, 15);
+    lx = sin(now * 0.005) * 0.35;
+    veins = true;
+  } else if (mode == 3) {
+    target = 0.6;
+    iris = color(80, 160, 255);
+    lx = cos(now * 0.025) * 0.75;
+    ly = sin(now * 0.025) * 0.5;
+    shake = 3;
+    veins = true;
+  } else if (mode == 4) {
+    target = 0.45;
+    iris = color(110, 150, 210);
+    lx = cos(now * 0.004) * 0.8;
+    ly = sin(now * 0.0052) * 0.5;
+  } else if (mode == 5) {
+    target = 0.5;
+    iris = color(180, 140, 40);
+    lx = ((now / 650) % 2 == 0) ? -0.8 : 0.8;
+    ly = ((now / 1300) % 2 == 0) ? 0.2 : -0.1;
+  }
+  if (target > 0 && now > ey.nextBlink) {
+    ey.blinkUntil = now + 120;
+    ey.nextBlink = now + (int) random(1600, 4200);
+  }
+  if (now < ey.blinkUntil && !hunting) target = 0;
+  ey.opening = lerp(ey.opening, target, 1 - exp(-frameDt * 16));
+  ey.lx = lerp(ey.lx, lx, 1 - exp(-frameDt * 12));
+  ey.ly = lerp(ey.ly, ly, 1 - exp(-frameDt * 12));
+
+  // subtle wander + twitches
+  float ox = 0, oy = 0, rot = 0;
+  if (alive) {
+    ox = (noise(ey.seed, now * 0.0005) - 0.5) * 14;
+    oy = (noise(ey.seed + 17, now * 0.0005) - 0.5) * 6;
+    rot = (noise(ey.seed + 31, now * 0.0004) - 0.5) * 0.08;
+    if (now >= ey.twUntil && random(1) < frameDt * (hunting ? 1.8 : 0.6)) {
+      ey.twUntil = now + (int) random(45, 130);
+      ey.twx = random(-5, 5);
+      ey.twy = random(-3, 3);
+      ey.twr = random(-0.08, 0.08);
+    }
+    if (now < ey.twUntil) {
+      ox += ey.twx;
+      oy += ey.twy;
+      rot += ey.twr;
+    }
+  }
+
+  float w = 112 * sc, h = 30 * sc;
+  pushMatrix();
+  translate(cx + (ox + random(-shake, shake)) * sc, cy + (oy + random(-shake, shake)) * sc);
+  rotate(rot);
+  float op = ey.opening * h;
+  if (op > 1.5) {
+    noStroke();
+    fill(hunting ? color(225, 200, 185) : color(200, 195, 180));
+    eyeShape(w, op);
+    if (veins) {
+      stroke(150, 15, 15, 200);
+      strokeWeight(1.4 * sc);
+      for (int k = 0; k < 6; k++) {
+        float side = k < 3 ? -1 : 1;
+        float x0 = side * w * 0.46, y0 = (k % 3 - 1) * op * 0.25;
+        float x1 = side * w * 0.2, y1 = y0 * 0.4 + (noise(k + ey.seed, now * 0.001) - 0.5) * 6 * sc;
+        float mx = (x0 + x1) / 2, my = (y0 + y1) / 2 + (k % 2 == 0 ? 3 : -3) * sc;
+        line(x0, y0, mx, my);
+        line(mx, my, x1, y1);
+      }
+      noStroke();
+    }
+    float r = h * 0.72;
+    float ix = ey.lx * w * 0.15, iy = ey.ly * op * 0.3;
+    float ih = min(r * 2, op * 1.7);
+    fill(iris);
+    ellipse(ix, iy, r * 2, ih);
+    float pr = hunting ? r * (0.35 + 0.15 * abs(sin(now * 0.02))) : r * 0.75;
+    fill(5);
+    ellipse(ix, iy, pr, min(pr, ih * 0.9));
+    fill(240, 200);
+    rect(ix + r * 0.25, iy - ih * 0.3, 4 * sc, 4 * sc);
+    noFill();
+    stroke(8);
+    strokeWeight(5 * sc);
+    eyeShape(w, op);
+    strokeWeight(3 * sc);
+    for (int k = 0; k < 7; k++) {
+      float t = (k + 1) / 8.0;
+      float x = lerp(-w / 2, w / 2, t);
+      float y = -3.9 * op * t * (1 - t);
+      line(x, y, x * 1.08, y - 9 * sc);
+    }
+    noStroke();
+  } else {
+    noFill();
+    for (int pass = 0; pass < 2; pass++) {
+      stroke(pass == 0 ? color(10, 200) : color(215, 205, 185));
+      strokeWeight((pass == 0 ? 9 : 4) * sc);
+      bezier(-w / 2, 0, -w / 4, 10 * sc, w / 4, 10 * sc, w / 2, 0);
+      strokeWeight((pass == 0 ? 6 : 2.5) * sc);
+      for (int k = 0; k < 7; k++) {
+        float t = (k + 1) / 8.0;
+        float x = lerp(-w / 2, w / 2, t);
+        float y = h * t * (1 - t);
+        line(x, y, x * 1.05, y + 9 * sc);
+      }
+    }
+    noStroke();
+  }
+  popMatrix();
+}
+
+
+void drawVsCard(float x, float y, float sz, float bright, float alpha, boolean front, String title) {
+  int now = millis();
+  float t = now / 1000.0, b = bright / 255.0;
+  boolean tw = now < twitchUntil[6];
+  pushMatrix();
+  translate(x, y);
+  if (tw) {
+    translate(twDx[6] * 0.6, twDy[6] * 0.6);
+    rotate(twRot[6] * 0.25);
+  }
+  rectMode(CENTER);
+  imageMode(CENTER);
+  noStroke();
+
+  // red heartbeat glow
+  float beat = pow(abs(sin(t * PI * 0.9)), 6);
+  for (int r = 9; r > 0; r--) {
+    fill(150 * b, 8, 6, alpha * (0.035 + 0.03 * beat) * (front ? 1 : 0.6));
+    ellipse(0, 0, sz * 0.13 * r, sz * 0.13 * r);
+  }
+
+  // the six, as photos orbiting slowly
+  float R = sz * 0.34, f = sz * 0.27, spin = t * 0.12;
+  for (int k = 0; k < 6; k++) {
+    float a = -HALF_PI + k * TWO_PI / 6 + spin;
+    float lit = 0.45 + 0.55 * noise(k * 3.7, t * 0.7);
+    boolean gl = tw && twType[6] == k % 4;
+    pushMatrix();
+    translate(cos(a) * R + (gl ? random(-7, 7) : 0), sin(a) * R);
+    rotate(sin(t * 0.8 + k * 1.1) * 0.06);
+    fill(0, alpha * 0.85);
+    rect(4, 5, f + 10, f + 10);
+    fill(200 * b * lit, 190 * b * lit, 170 * b * lit, alpha);
+    rect(0, 0, f + 8, f + 8);
+    if (gl) tint(bright * lit, bright * lit * 0.25, bright * lit * 0.25, alpha);
+    else tint(bright * lit, alpha);
+    image(faces[k], 0, 0, f, f);
+    noTint();
+    popMatrix();
+  }
+
+  rectMode(CORNER);
+  imageMode(CORNER);
+  popMatrix();
+}
+
+void shiftEyeClock(Eye e, int d) {
+  if (e == null) return;
+  if (e.blinkUntil > 0) e.blinkUntil += d;
+  if (e.nextBlink > 0) e.nextBlink += d;
+  if (e.twUntil > 0) e.twUntil += d;
+}
+
+// Gain has one audio input. Sum independent sources before channel gain.
+void initAudioBuses() {
+  fxBus = new Gain(0);
+  voiceBus = new Gain(0);
+  fxMix = new Summer();
+  voiceMix = new Summer();
+  fxMix.patch(fxBus);
+  voiceMix.patch(voiceBus);
+}
+
+boolean hasWallX(int i, int j) {
+  return wallX != null && i >= 0 && i < wallX.length && j >= 0 && j < wallX[i].length && wallX[i][j];
+}
+boolean hasWallY(int i, int j) {
+  return wallY != null && i >= 0 && i < wallY.length && j >= 0 && j < wallY[i].length && wallY[i][j];
+}
+boolean wallBetween(int i, int j, int ni, int nj) {
+  if (ni != i) return hasWallX(max(i, ni), j);
+  return hasWallY(i, max(j, nj));
+}
+boolean canStep(int i, int j, int ni, int nj) {
+  return abs(ni - i) + abs(nj - j) == 1 && !isWall(i, j) && !isWall(ni, nj) && !wallBetween(i, j, ni, nj);
+}
+boolean circleBox(float x, float y, float r, float x0, float y0, float x1, float y1) {
+  return sq(x - constrain(x, x0, x1)) + sq(y - constrain(y, y0, y1)) <= r * r;
+}
+boolean hitsWallSlab(float x, float y, float r) {
+  float half = WALL_THICKNESS / 2;
+  int a = max(0, cellOf(x - r - half)), b = min(GRID, cellOf(x + r + half) + 1);
+  int c = max(0, cellOf(y - r - half)), d = min(GRID, cellOf(y + r + half) + 1);
+  for (int i = a; i <= b; i++) for (int j = c; j <= d; j++) {
+    if (hasWallX(i, j) && circleBox(x, y, r, i * CELL - half, j * CELL - half, i * CELL + half, (j + 1) * CELL + half)) return true;
+    if (hasWallY(i, j) && circleBox(x, y, r, i * CELL - half, j * CELL - half, (i + 1) * CELL + half, j * CELL + half)) return true;
+  }
+  return false;
+}
+boolean segmentBox(float x0, float y0, float x1, float y1, float lx, float ly, float hx, float hy) {
+  float low = 0, high = 1, dx = x1 - x0, dy = y1 - y0;
+  if (abs(dx) < 0.000001) { if (x0 < lx || x0 > hx) return false; }
+  else {
+    float a = (lx - x0) / dx, b = (hx - x0) / dx;
+    low = max(low, min(a, b)); high = min(high, max(a, b));
+    if (low > high) return false;
+  }
+  if (abs(dy) < 0.000001) { if (y0 < ly || y0 > hy) return false; }
+  else {
+    float a = (ly - y0) / dy, b = (hy - y0) / dy;
+    low = max(low, min(a, b)); high = min(high, max(a, b));
+  }
+  return low <= high;
+}
+boolean wallRayInCell(int i, int j, float x0, float y0, float x1, float y1) {
+  float h = WALL_THICKNESS / 2;
+  for (int side = 0; side <= 1; side++) for (int offset = -1; offset <= 1; offset++) {
+    int edge = i + side, along = j + offset;
+    if (hasWallX(edge, along) && segmentBox(x0, y0, x1, y1, edge * CELL - h, along * CELL - h, edge * CELL + h, (along + 1) * CELL + h)) return true;
+    edge = j + side; along = i + offset;
+    if (hasWallY(along, edge) && segmentBox(x0, y0, x1, y1, along * CELL - h, edge * CELL - h, (along + 1) * CELL + h, edge * CELL + h)) return true;
+  }
+  return false;
+}
+
+
+// An open floor populated by freestanding wall runs and L/T-shaped islands.
+// The grid is navigation/light sampling only; no interior cell is a wall block.
+void generateWorld() {
+  giPlacementReady=false;
+  solid = new boolean[GRID][GRID];
+  wallX = new boolean[GRID + 1][GRID];
+  wallY = new boolean[GRID][GRID + 1];
+  for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++)
+    solid[i][j] = i == 0 || j == 0 || i == GRID - 1 || j == GRID - 1;
+  for (int k = 1; k < GRID - 1; k++) {
+    wallX[1][k] = wallX[GRID - 1][k] = true;
+    wallY[k][1] = wallY[k][GRID - 1] = true;
+  }
+  int target = round(sq(GRID - 2) * 0.42), placed = 0;
+  for (int attempt = 0; attempt < target * 20 && placed < target; attempt++) {
+    boolean vertical = random(1) < 0.5;
+    int i = (int) random(2, GRID - 2), j = (int) random(2, GRID - 2);
+    int len = (int) random(2, 6), sign = random(1) < 0.5 ? -1 : 1;
+    int gap = len >= 4 && random(1) < 0.32 ? (int) random(1, len - 1) : -1;
+    for (int k = 0; k < len; k++) {
+      int x = i + (vertical ? 0 : k * sign), y = j + (vertical ? k * sign : 0);
+      if (k == gap || x < 2 || y < 2 || x >= GRID - 2 || y >= GRID - 2) continue;
+      // Avoid repeated parallel walls a single cell apart: broad bays, not maze lanes.
+      if (vertical) {
+        if (wallX[x][y] || hasWallX(x - 1, y) || hasWallX(x + 1, y)) continue;
+        wallX[x][y] = true;
+      } else {
+        if (wallY[x][y] || hasWallY(x, y - 1) || hasWallY(x, y + 1)) continue;
+        wallY[x][y] = true;
+      }
+      placed++;
+    }
+    if (random(1) < 0.45) {
+      int x = i + (vertical ? 0 : (len - 1) * sign), y = j + (vertical ? (len - 1) * sign : 0);
+      int bend = (int) random(1, 4), turn = random(1) < 0.5 ? -1 : 1;
+      for (int k = 0; k < bend; k++) {
+        int bx = x + (vertical ? k * turn : 0), by = y + (vertical ? 0 : k * turn);
+        if (bx < 2 || by < 2 || bx >= GRID - 2 || by >= GRID - 2) continue;
+        if (vertical && !wallY[bx][by] && !hasWallY(bx, by - 1) && !hasWallY(bx, by + 1)) { wallY[bx][by] = true; placed++; }
+        if (!vertical && !wallX[bx][by] && !hasWallX(bx - 1, by) && !hasWallX(bx + 1, by)) { wallX[bx][by] = true; placed++; }
+      }
+    }
+  }
+  connectOpenFloor();
+  rebuildWallVoxels();
+}
+
+void setWallBetween(int i, int j, int ni, int nj, boolean value) {
+  if (ni != i) wallX[max(i, ni)][j] = value;
+  else wallY[i][max(j, nj)] = value;
+}
+
+void connectOpenFloor() {
+  for (int guard = 0; guard < GRID * GRID; guard++) {
+    int[][] reachable = bfs(1, 1);
+    boolean disconnected = false, removed = false;
+    for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
+      if (reachable[i][j] >= 0) continue;
+      disconnected = true;
+      if (removed) continue;
+      for (int[] d : DIRS) {
+        int ni = i + d[0], nj = j + d[1];
+        if (!isWall(ni, nj) && reachable[ni][nj] >= 0) {
+          setWallBetween(i, j, ni, nj, false); removed = true; break;
+        }
+      }
+    }
+    if (!disconnected) return;
+    if (!removed) throw new IllegalStateException("Could not connect open floor");
+  }
+  throw new IllegalStateException("Open-floor connectivity repair exceeded limit");
+}
+
+boolean secretEdge(int i, int j, int ni, int nj) {
+  for (Secret s : secrets) if (!s.opened &&
+    ((s.di == i && s.dj == j && s.wi == ni && s.wj == nj) || (s.di == ni && s.dj == nj && s.wi == i && s.wj == j))) return true;
+  return false;
+}
+
+void rebuildWallVoxels() {
+  int n = GRID * WALL_SUBDIV;
+  wallVoxels = new boolean[n][n];
+  float h = WALL_THICKNESS / 2;
+  for (int i = 1; i < GRID; i++) for (int j = 1; j < GRID - 1; j++)
+    if (hasWallX(i, j)) fillWallRect(i * CELL - h, j * CELL - h, i * CELL + h, (j + 1) * CELL + h);
+  for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID; j++)
+    if (hasWallY(i, j)) fillWallRect(i * CELL - h, j * CELL - h, (i + 1) * CELL + h, j * CELL + h);
+}
+
+void fillWallRect(float x0, float y0, float x1, float y1) {
+  float unit = CELL / WALL_SUBDIV;
+  for (int i = max(0, round(x0 / unit)); i < min(wallVoxels.length, round(x1 / unit)); i++)
+    for (int j = max(0, round(y0 / unit)); j < min(wallVoxels.length, round(y1 / unit)); j++) wallVoxels[i][j] = true;
+}
+
+boolean wallVoxel(int i, int j) {
+  return i >= 0 && j >= 0 && i < wallVoxels.length && j < wallVoxels.length && wallVoxels[i][j];
+}
+
+// Greedily merge only exposed edges of the solid wall union. L/T/cross joins
+// cannot create overlapping coplanar faces, hidden end caps, or junction gaps.
+void appendWallMesh(PShape mesh) {
+  float unit = CELL / WALL_SUBDIV;
+  PVector down = new PVector(0, 0, -WALL_H);
+  int n = wallVoxels.length;
+  for (int i = 0; i <= n; i++) for (int side = 0; side < 2; side++) {
+    int j = 0;
+    while (j < n) {
+      boolean exposed = side == 0 ? wallVoxel(i, j) && !wallVoxel(i - 1, j) : wallVoxel(i - 1, j) && !wallVoxel(i, j);
+      if (!exposed) { j++; continue; }
+      int start = j++;
+      while (j < n && (side == 0 ? wallVoxel(i, j) && !wallVoxel(i - 1, j) : wallVoxel(i - 1, j) && !wallVoxel(i, j))) j++;
+      float length = (j - start) * unit;
+      addQuad(mesh, new PVector(i * unit, start * unit, WALL_H), new PVector(0, length, 0), down, length / CELL, WALL_H / CELL);
+    }
+  }
+  for (int j = 0; j <= n; j++) for (int side = 0; side < 2; side++) {
+    int i = 0;
+    while (i < n) {
+      boolean exposed = side == 0 ? wallVoxel(i, j) && !wallVoxel(i, j - 1) : wallVoxel(i, j - 1) && !wallVoxel(i, j);
+      if (!exposed) { i++; continue; }
+      int start = i++;
+      while (i < n && (side == 0 ? wallVoxel(i, j) && !wallVoxel(i, j - 1) : wallVoxel(i, j - 1) && !wallVoxel(i, j))) i++;
+      float length = (i - start) * unit;
+      addQuad(mesh, new PVector(start * unit, j * unit, WALL_H), new PVector(length, 0, 0), down, length / CELL, WALL_H / CELL);
+    }
+  }
+}
+
+final int LEVEL_CHUNK_CELLS = 4;
+class LevelChunk {
+  PShape[] material = new PShape[3];
+  PShape shape;
+  float minX = Float.MAX_VALUE, minY = Float.MAX_VALUE, minZ = Float.MAX_VALUE;
+  float maxX = -Float.MAX_VALUE, maxY = -Float.MAX_VALUE, maxZ = -Float.MAX_VALUE;
+  float x, y, z, radius, distance2;
+}
+ArrayList<LevelChunk> levelChunks = new ArrayList<LevelChunk>();
+HashMap<Integer, LevelChunk> chunkBuild = new HashMap<Integer, LevelChunk>();
+boolean buildingLevelChunks;
+PShape[] levelMaterials = new PShape[3];
+java.util.Comparator<LevelChunk> chunkNearFirst = new java.util.Comparator<LevelChunk>() {
+  public int compare(LevelChunk a, LevelChunk b) { return Float.compare(a.distance2, b.distance2); }
+};
+
+void beginLevelChunks(PShape floorMesh, PShape ceilingMesh, PShape wallMesh) {
+  levelChunks.clear(); chunkBuild.clear();
+  levelMaterials[0] = floorMesh; levelMaterials[1] = ceilingMesh; levelMaterials[2] = wallMesh;
+  buildingLevelChunks = true;
+}
+
+void addChunkQuad(PShape source, PVector o, PVector a, PVector b, float uRep, float vRep) {
+  int material = source == levelMaterials[0] ? 0 : source == levelMaterials[1] ? 1 : source == levelMaterials[2] ? 2 : -1;
+  if (material < 0) return;
+  float chunkSize = CELL * LEVEL_CHUNK_CELLS;
+  int ci = floor((o.x + (a.x + b.x) * 0.5) / chunkSize), cj = floor((o.y + (a.y + b.y) * 0.5) / chunkSize);
+  int key = ci + cj * (MAX_GRID + 2);
+  LevelChunk chunk = chunkBuild.get(key);
+  if (chunk == null) { chunk = new LevelChunk(); chunkBuild.put(key, chunk); levelChunks.add(chunk); }
+  if (chunk.material[material] == null) chunk.material[material] = startMesh(material == 0 ? carpet : material == 1 ? roof : wall);
+  PShape target = chunk.material[material];
+  corner(target, o, a, b, 0, 0, uRep, vRep); corner(target, o, a, b, 1, 0, uRep, vRep);
+  corner(target, o, a, b, 1, 1, uRep, vRep); corner(target, o, a, b, 0, 1, uRep, vRep);
+  float x1 = o.x + a.x + b.x, y1 = o.y + a.y + b.y, z1 = o.z + a.z + b.z;
+  chunk.minX = min(chunk.minX, min(o.x, x1)); chunk.maxX = max(chunk.maxX, max(o.x, x1));
+  chunk.minY = min(chunk.minY, min(o.y, y1)); chunk.maxY = max(chunk.maxY, max(o.y, y1));
+  chunk.minZ = min(chunk.minZ, min(o.z, z1)); chunk.maxZ = max(chunk.maxZ, max(o.z, z1));
+}
+
+void finishLevelChunks() {
+  buildingLevelChunks = false;
+  for (LevelChunk chunk : levelChunks) {
+    chunk.shape = createShape(GROUP);
+    for (PShape material : chunk.material) if (material != null) { material.endShape(); chunk.shape.addChild(material); }
+    chunk.x = (chunk.minX + chunk.maxX) * 0.5; chunk.y = (chunk.minY + chunk.maxY) * 0.5; chunk.z = (chunk.minZ + chunk.maxZ) * 0.5;
+    chunk.radius = sqrt(sq(chunk.maxX - chunk.minX) + sq(chunk.maxY - chunk.minY) + sq(chunk.maxZ - chunk.minZ)) * 0.5 + 2;
+  }
+  chunkBuild.clear();
+}
+
+void drawVisibleLevel(PGraphics target, PVector right, PVector up, float tanY, float aspect) {
+  if (levelChunks.isEmpty()) { target.shape(level); return; }
+  float tanX = tanY * aspect, normalX = sqrt(1 + tanX * tanX), normalY = sqrt(1 + tanY * tanY);
+  for (LevelChunk chunk : levelChunks) chunk.distance2 = sq(chunk.x - camX) + sq(chunk.y - camY) + sq(chunk.z - camZ);
+  java.util.Collections.sort(levelChunks, chunkNearFirst);
+  for (LevelChunk chunk : levelChunks) {
+    float dx = chunk.x - camX, dy = chunk.y - camY, dz = chunk.z - camZ;
+    float ahead = dx * camDX + dy * camDY + dz * camDZ;
+    if (ahead + chunk.radius < 0) continue;
+    float across = dx * right.x + dy * right.y + dz * right.z;
+    if (abs(across) - ahead * tanX > chunk.radius * normalX) continue;
+    float vertical = dx * up.x + dy * up.y + dz * up.z;
+    if (abs(vertical) - ahead * tanY > chunk.radius * normalY) continue;
+    target.shape(chunk.shape);
+  }
+}
+
+// A point can see around a corner before a body can fit around it.
+// Sweep a circle against the same square-capped slabs used by collision.
+final float ENEMY_RADIUS = 35;
+
+float segmentPointDistanceSq(float ax, float ay, float bx, float by, float x, float y) {
+  float dx = bx - ax, dy = by - ay, length2 = dx * dx + dy * dy;
+  float t = length2 > 0 ? constrain(((x - ax) * dx + (y - ay) * dy) / length2, 0, 1) : 0;
+  return sq(x - ax - dx * t) + sq(y - ay - dy * t);
+}
+
+boolean sweptCircleBox(float ax, float ay, float bx, float by, float r, float lx, float ly, float hx, float hy) {
+  // Rectangle strips plus round corners form the exact circle-expanded box.
+  if (segmentBox(ax, ay, bx, by, lx - r, ly, hx + r, hy)
+      || segmentBox(ax, ay, bx, by, lx, ly - r, hx, hy + r)) return true;
+  float r2 = r * r;
+  return segmentPointDistanceSq(ax, ay, bx, by, lx, ly) <= r2
+      || segmentPointDistanceSq(ax, ay, bx, by, lx, hy) <= r2
+      || segmentPointDistanceSq(ax, ay, bx, by, hx, ly) <= r2
+      || segmentPointDistanceSq(ax, ay, bx, by, hx, hy) <= r2;
+}
+
+boolean sweptWallsInCell(int i, int j, float ax, float ay, float bx, float by, float r) {
+  float h = WALL_THICKNESS / 2;
+  for (int side = 0; side <= 1; side++) for (int offset = -1; offset <= 1; offset++) {
+    int edge = i + side, along = j + offset;
+    if (hasWallX(edge, along) && sweptCircleBox(ax, ay, bx, by, r, edge * CELL - h, along * CELL - h, edge * CELL + h, (along + 1) * CELL + h)) return true;
+    edge = j + side; along = i + offset;
+    if (hasWallY(along, edge) && sweptCircleBox(ax, ay, bx, by, r, along * CELL - h, edge * CELL - h, (along + 1) * CELL + h, edge * CELL + h)) return true;
+  }
+  return false;
+}
+
+boolean walkableSegment(float ax, float ay, float bx, float by, float r) {
+  if (hitsWall(ax, ay, r) || hitsWall(bx, by, r)) return false;
+  int i = cellOf(ax), j = cellOf(ay), ei = cellOf(bx), ej = cellOf(by);
+  float dx = bx - ax, dy = by - ay;
+  int sx = dx > 0 ? 1 : dx < 0 ? -1 : 0, sy = dy > 0 ? 1 : dy < 0 ? -1 : 0;
+  float tx = sx == 0 ? Float.POSITIVE_INFINITY : (((sx > 0 ? i + 1 : i) * CELL) - ax) / dx;
+  float ty = sy == 0 ? Float.POSITIVE_INFINITY : (((sy > 0 ? j + 1 : j) * CELL) - ay) / dy;
+  float stepX = sx == 0 ? Float.POSITIVE_INFINITY : CELL / abs(dx);
+  float stepY = sy == 0 ? Float.POSITIVE_INFINITY : CELL / abs(dy);
+  for (int guard = 0; guard < GRID * 2 + 2; guard++) {
+    if (isWall(i, j) || sweptWallsInCell(i, j, ax, ay, bx, by, r)) return false;
+    if (i == ei && j == ej) return true;
+    if (abs(tx - ty) < 0.000001) { i += sx; j += sy; tx += stepX; ty += stepY; }
+    else if (tx < ty) { i += sx; tx += stepX; }
+    else { j += sy; ty += stepY; }
+  }
+  return false;
+}
+
+void buildEnemyRoute(Enemy e, int[][] f, PVector destination) {
+  e.navRoute.clear(); e.navIndex = 0; e.navFlow = f;
+  int i = cellOf(e.pos.x), j = cellOf(e.pos.y);
+  if (f == null || isWall(i, j) || f[i][j] < 0) return;
+  ArrayList<PVector> raw = new ArrayList<PVector>();
+  raw.add(new PVector((i + 0.5) * CELL, (j + 0.5) * CELL));
+  int gi = cellOf(destination.x), gj = cellOf(destination.y);
+  for (int guard = 0; f[i][j] > 0 && guard < GRID * GRID; guard++) {
+    int bi = i, bj = j;
+    float best = Float.MAX_VALUE;
+    for (int[] d : DIRS) {
+      int ni = i + d[0], nj = j + d[1];
+      if (!canStep(i, j, ni, nj) || f[ni][nj] != f[i][j] - 1) continue;
+      float score = sq(ni - gi) + sq(nj - gj);
+      if (score < best) { bi = ni; bj = nj; best = score; }
+    }
+    if (bi == i && bj == j) { e.navRoute.clear(); return; }
+    i = bi; j = bj;
+    raw.add(new PVector((i + 0.5) * CELL, (j + 0.5) * CELL));
+  }
+  // String-pull once per new flow field, preserving body clearance at every bend.
+  float ax = e.pos.x, ay = e.pos.y;
+  int first = 0;
+  while (first < raw.size()) {
+    int last = -1;
+    for (int k = first; k < raw.size(); k++) {
+      PVector p = raw.get(k);
+      if (!walkableSegment(ax, ay, p.x, p.y, ENEMY_RADIUS)) break;
+      last = k;
+    }
+    if (last < 0) { e.navRoute.clear(); return; }
+    PVector p = raw.get(last);
+    e.navRoute.add(p); ax = p.x; ay = p.y; first = last + 1;
+  }
+}
+
+void moveEnemy(Enemy e, float dx, float dy) {
+  float nx = e.pos.x + dx, ny = e.pos.y + dy;
+  if (walkableSegment(e.pos.x, e.pos.y, nx, ny, ENEMY_RADIUS)) { e.pos.set(nx, ny); return; }
+  // If a target changes next to a wall, slide only over segments the body can clear.
+  if (walkableSegment(e.pos.x, e.pos.y, nx, e.pos.y, ENEMY_RADIUS)) e.pos.x = nx;
+  if (walkableSegment(e.pos.x, e.pos.y, e.pos.x, ny, ENEMY_RADIUS)) e.pos.y = ny;
+  e.navFlow = null;
+}
+
+String[] TAPE_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision mediump float;",
+  "#endif",
+  "uniform sampler2D texture;",
+  "uniform vec2 texOffset;",
+  "uniform float lumaBlur;",
+  "uniform float chromaBlur;",
+  "uniform float chromaShift;",
+  "uniform float sharpen;",
+  "uniform float sat;",
+  "varying vec4 vertColor;",
+  "varying vec4 vertTexCoord;",
+  "vec3 yiq(vec3 c) { return vec3(dot(c, vec3(0.299, 0.587, 0.114)), dot(c, vec3(0.596, -0.274, -0.322)), dot(c, vec3(0.211, -0.523, 0.312))); }",
+  "vec3 rgb(vec3 q) { return vec3(q.x + 0.956 * q.y + 0.621 * q.z, q.x - 0.272 * q.y - 0.647 * q.z, q.x - 1.106 * q.y + 1.703 * q.z); }",
+  "void main() {",
+  "  vec2 uv = vertTexCoord.st;",
+  "  float px = texOffset.x;",
+  "  float Y = 0.0, Yw = 0.0, wY = 0.0, wW = 0.0;",
+  "  for (int k = -6; k <= 6; k++) {",
+  "    float fk = float(k);",
+  "    float l = yiq(texture2D(texture, uv + vec2(fk * px, 0.0)).rgb).x;",
+  "    float gl = exp(-fk * fk / (2.0 * lumaBlur * lumaBlur));",
+  "    float gw = exp(-fk * fk / 18.0);",
+  "    Y += l * gl; wY += gl;",
+  "    Yw += l * gw; wW += gw;",
+  "  }",
+  "  Y /= wY; Yw /= wW;",
+  "  vec2 C = vec2(0.0);",
+  "  float wC = 0.0;",
+  "  for (int k = -8; k <= 8; k++) {",
+  "    float fk = float(k) * 2.0;",
+  "    vec2 c = yiq(texture2D(texture, uv + vec2((fk - chromaShift) * px, 0.0)).rgb).yz;",
+  "    float g = exp(-fk * fk / (2.0 * chromaBlur * chromaBlur));",
+  "    C += c * g; wC += g;",
+  "  }",
+  "  C /= wC;",
+  "  Y += (Y - Yw) * sharpen;",
+  "  gl_FragColor = vec4(clamp(rgb(vec3(Y, C * sat)), 0.0, 1.0), 1.0);",
+  "}"
+};
+
+void applyTape() {
+  applyTapeTo(g);
+}
+
+// Surface radiosity: cosine-weighted hemisphere transport between the actual
+// welded walls, floor and ceiling. Visibility is baked; no per-frame GI rays.
+PImage giTex, wallGI, giDynamic;
+final int GI_RES = 8, GI_LAYERS = 3, GI_RAYS = 32, GI_BOUNCES = 5;
+final float GI_PATCH = CELL / 4;
+float giLive = 1;
+float[] giField;
+int giSize, giWallSize, giFloorSize;
+int[] giFloorIds, giWallIds;
+ArrayList<LightPatch> giPatches = new ArrayList<LightPatch>();
+float[][] giLampWeights;
+int giDynamicNext;
+
+class LightPatch {
+  float x, y, z, nx, ny, nz, r, g, b;
+  float dr, dg, db, ir, ig, ib;
+  int[] hits = new int[GI_RAYS];
+  LightPatch(float x, float y, float z, float nx, float ny, float nz, float[] rho) {
+    this.x=x; this.y=y; this.z=z; this.nx=nx; this.ny=ny; this.nz=nz;
+    r=rho[0]; g=rho[1]; b=rho[2];
+    java.util.Arrays.fill(hits, -1);
+  }
+}
+
+
+
+float[] averageReflectance(PImage tex, int material) {
+  if (material==0) return new float[]{0.13,0.105,0.065};
+  float r=0.58, g=0.53, b=0.36;
+  if (tex!=null && tex.width>0 && tex.height>0) {
+    tex.loadPixels(); r=g=b=0;
+    for (int y=0; y<16; y++) for (int x=0; x<16; x++) {
+      int c=tex.pixels[min(tex.pixels.length-1, floor((y+0.5)*tex.height/16)*tex.width+floor((x+0.5)*tex.width/16))];
+      r+=pow(((c>>16)&255)/255.0,2.2); g+=pow(((c>>8)&255)/255.0,2.2); b+=pow((c&255)/255.0,2.2);
+    }
+    r/=256; g/=256; b/=256;
+  }
+  if (material==1) {
+    float l=0.299*r+0.587*g+0.114*b;
+    float scale=0.42/max(l,0.05);
+    r=(l*0.82+r*0.18)*scale*1.08; g=(l*0.82+g*0.18)*scale*1.02; b=(l*0.82+b*0.18)*scale*0.72;
+  } else {
+    float l=0.299*r+0.587*g+0.114*b, scale=0.6/max(l,0.05);
+    r*=scale; g*=scale; b*=scale*0.98;
+  }
+  return new float[]{constrain(r,0.04,0.82),constrain(g,0.04,0.82),constrain(b,0.04,0.82)};
+}
+
+int giWallIndex(int face, int plane, int along, int layer) {
+  return ((layer*giWallSize+along)*4+face)*(giWallSize+1)+plane;
+}
+
+int addLightPatch(float x,float y,float z,float nx,float ny,float nz,float[] rho) {
+  giPatches.add(new LightPatch(x,y,z,nx,ny,nz,rho)); return giPatches.size()-1;
+}
+
+void buildLightPatches() {
+  giPatches.clear(); giFloorSize=round(GRID*CELL/GI_PATCH);
+  giWallSize=GRID*WALL_SUBDIV; giSize=GRID*GI_RES;
+  giFloorIds=new int[giFloorSize*giFloorSize*2];
+  giWallIds=new int[(giWallSize+1)*giWallSize*4*GI_LAYERS];
+  java.util.Arrays.fill(giFloorIds,-1); java.util.Arrays.fill(giWallIds,-1);
+  float[] floorRho=averageReflectance(carpet,0), wallRho=averageReflectance(wall,1), ceilingRho=averageReflectance(roof,2);
+  for (int y=0;y<giFloorSize;y++) for (int x=0;x<giFloorSize;x++) {
+    float px=(x+0.5)*GI_PATCH, py=(y+0.5)*GI_PATCH;
+    if (isWall(cellOf(px),cellOf(py))) continue;
+    if (hitsWallSlab(px,py,0.01)) {
+      boolean found=false;
+      for (int k=0;k<4;k++) {
+        float qx=px+((k&1)==0?-0.25:0.25)*GI_PATCH, qy=py+((k&2)==0?-0.25:0.25)*GI_PATCH;
+        if (!hitsWallSlab(qx,qy,0.01)) { px=qx; py=qy; found=true; break; }
+      }
+      if (!found) continue;
+    }
+    int id=y*giFloorSize+x;
+    giFloorIds[id]=addLightPatch(px,py,0,0,0,1,floorRho);
+    giFloorIds[id+giFloorSize*giFloorSize]=addLightPatch(px,py,WALL_H,0,0,-1,ceilingRho);
+  }
+  float unit=CELL/WALL_SUBDIV;
+  for (int y=0;y<giWallSize;y++) for (int x=0;x<giWallSize;x++) {
+    if (!wallVoxel(x,y)) continue;
+    for (int face=0;face<4;face++) {
+      int nx=face==0?1:face==1?-1:0, ny=face==2?1:face==3?-1:0;
+      if (wallVoxel(x+nx,y+ny)) continue;
+      float px=(x+0.5+nx*0.5)*unit, py=(y+0.5+ny*0.5)*unit;
+      if (isWall(cellOf(px+nx),cellOf(py+ny))) continue;
+      int plane=nx!=0?round(px/unit):round(py/unit), along=nx!=0?y:x;
+      for (int h=0;h<GI_LAYERS;h++) giWallIds[giWallIndex(face,plane,along,h)]=
+        addLightPatch(px,py,(h+0.5)*WALL_H/GI_LAYERS,nx,ny,0,wallRho);
+    }
+  }
+}
+
+// A ray starts just outside a surface. Full-height wall voxels are identical
+// to the welded render mesh; traversal stops at the first wall/floor/ceiling.
+int traceLightPatch(float ox,float oy,float oz,float dx,float dy,float dz) {
+  float unit=CELL/WALL_SUBDIV;
+  float end=dz>0.00001?(WALL_H-oz)/dz:dz<-0.00001?-oz/dz:1.0e8;
+  int x=floor(ox/unit), y=floor(oy/unit), sx=dx>=0?1:-1, sy=dy>=0?1:-1;
+  float tx=abs(dx)<0.00001?1.0e9:((x+(sx>0?1:0))*unit-ox)/dx;
+  float ty=abs(dy)<0.00001?1.0e9:((y+(sy>0?1:0))*unit-oy)/dy;
+  float stepx=abs(dx)<0.00001?1.0e9:unit/abs(dx), stepy=abs(dy)<0.00001?1.0e9:unit/abs(dy);
+  for (int step=0;step<giWallSize*2;step++) {
+    float t=min(tx,ty);
+    if (t>=end) {
+      int fx=floor((ox+dx*end)/GI_PATCH), fy=floor((oy+dy*end)/GI_PATCH);
+      if (fx<0||fy<0||fx>=giFloorSize||fy>=giFloorSize) return -1;
+      return giFloorIds[(dz>0?giFloorSize*giFloorSize:0)+fy*giFloorSize+fx];
+    }
+    int face,plane,along;
+    if (tx<ty) { x+=sx; face=sx>0?1:0; plane=sx>0?x:x+1; along=floor((oy+dy*t)/unit); tx+=stepx; }
+    else { y+=sy; face=sy>0?3:2; plane=sy>0?y:y+1; along=floor((ox+dx*t)/unit); ty+=stepy; }
+    if (x<0||y<0||x>=giWallSize||y>=giWallSize) return -1;
+    if (wallVoxel(x,y)) {
+      int h=constrain(floor((oz+dz*t)*GI_LAYERS/WALL_H),0,GI_LAYERS-1);
+      return giWallIds[giWallIndex(face,plane,constrain(along,0,giWallSize-1),h)];
+    }
+  }
+  return -1;
+}
+
+void bakePatchDirect(LightPatch s) {
+  int ci=cellOf(s.x+s.nx), cj=cellOf(s.y+s.ny);
+  float total=0, hr=CELL*1.5;
+  if (s.nz < -0.5) {
+    // Optical spill around the flush fitting; the downward emitter itself
+    // cannot directly illuminate a coplanar ceiling.
+    for (int i=max(1,ci-1);i<=min(GRID-2,ci+1);i++) for (int j=max(1,cj-1);j<=min(GRID-2,cj+1);j++) {
+      if (lampType[i][j]==2) continue;
+      float lx=(i+0.5)*CELL, ly=(j+0.5)*CELL;
+      if (!lineOfSight(s.x,s.y,lx,ly)) continue;
+      float pd=dist(0,0,max(abs(s.x-lx)-CELL/12,0),max(abs(s.y-ly)-CELL/12,0));
+      total+=(lampType[i][j]==1?0.7:1)*fixturePower(i,j)*0.9*exp(-pd/60);
+    }
+  } else for (int i=max(1,ci-1);i<=min(GRID-2,ci+1);i++) for (int j=max(1,cj-1);j<=min(GRID-2,cj+1);j++) {
+    if (lampType[i][j]==2) continue;
+    float lx=(i+0.5)*CELL, ly=(j+0.5)*CELL;
+    float p=(lampType[i][j]==1?0.7:1)*fixturePower(i,j);
+    for (int k=0;k<4;k++) {
+      float qx=lx+((k&1)==0?-1:1)*CELL/24, qy=ly+((k&2)==0?-1:1)*CELL/24;
+      float dx=qx-s.x, dy=qy-s.y, dz=WALL_H-3-s.z, hd=sqrt(dx*dx+dy*dy);
+      if (hd>=hr || !lineOfSight(s.x+s.nx,s.y+s.ny,qx,qy)) continue;
+      float d2=dx*dx+dy*dy+dz*dz, inv=1/sqrt(max(d2,1));
+      float ndl=max(0,(s.nx*dx+s.ny*dy+s.nz*dz)*inv), sourceCos=max(dz*inv,0);
+      float w=1-pow(hd/hr,4), att=w*w/(1+d2/(CELL*CELL*0.9));
+      total+=0.25*1.15*0.96*p*att*ndl*sourceCos;
+    }
+  }
+  s.dr=total; s.dg=total*0.98; s.db=total*0.80;
+}
+
+
+
+int encodeBounce(float r,float g,float b) {
+  // Allocate most of the 8-bit precision to the low-energy bounced light.
+  int ri=round(constrain(r/(r+0.25),0,1)*255),gi=round(constrain(g/(g+0.25),0,1)*255),bi=round(constrain(b/(b+0.25),0,1)*255);
+  return 0xff000000|(ri<<16)|(gi<<8)|bi;
+}
+
+// Resample onto a fine, wall-aligned lightmap. Visibility-weighted gathering
+// prevents coarse floor patches or bilinear filtering crossing a partition.
+
+
+void buildDynamicGIWeights() {
+  giLampWeights=new float[GRID*GRID][25];
+  for (int y=1;y<GRID-1;y++) for (int x=1;x<GRID-1;x++) {
+    float px=(x+0.5)*CELL,py=(y+0.5)*CELL;
+    for (int dy=-2;dy<=2;dy++) for (int dx=-2;dx<=2;dx++) {
+      int i=x+dx,j=y+dy,k=(dy+2)*5+dx+2;
+      if (isWall(i,j)||lampType[i][j]==2||!lineOfSight(px,py,(i+0.5)*CELL,(j+0.5)*CELL)) continue;
+      giLampWeights[y*GRID+x][k]=1/(1+dx*dx+dy*dy);
+    }
+  }
+  if (giDynamic==null||giDynamic.width!=GRID) giDynamic=createImage(GRID,GRID,RGB);
+  giDynamic.loadPixels(); java.util.Arrays.fill(giDynamic.pixels,0xffffffff); giDynamic.updatePixels(); giDynamicNext=0;
+}
+
+void updateDynamicGI(boolean reset) {
+  if (giDynamic==null||giLampWeights==null) return;
+  int now=millis(); if (!reset && now<giDynamicNext) return; giDynamicNext=now+100;
+  giDynamic.loadPixels();
+  for (int y=0;y<GRID;y++) for (int x=0;x<GRID;x++) {
+    float lit=0,nom=0;
+    float[] weights=giLampWeights[y*GRID+x];
+    for (int dy=-2;dy<=2;dy++) for (int dx=-2;dx<=2;dx++) {
+      int i=x+dx,j=y+dy; float w=weights[(dy+2)*5+dx+2]; if (w==0) continue;
+      float base=(lampType[i][j]==1?0.7:1)*fixturePower(i,j);
+      nom+=w*base; lit+=w*(reset?base:lampP[i][j]);
+    }
+    float value=nom>0?constrain(lit/nom,0,1):1;
+    float old=(giDynamic.pixels[y*GRID+x]&255)/255.0;
+    int v=round(255*(reset?value:lerp(old,value,0.55)));
+    giDynamic.pixels[y*GRID+x]=0xff000000|(v<<16)|(v<<8)|v;
+  }
+  giDynamic.updatePixels();
+}
+
+// Stable ballast variation creates visible light pools without changing the navigation
+// or the fixed-lamp stealth rules. Dynamic flicker still multiplies each fixture.
+float fixturePower(int i, int j) {
+  int seed = (i * 73856093) ^ (j * 19349663);
+  seed = (seed ^ (seed >>> 13)) * 1274126177;
+  seed ^= seed >>> 16;
+  return (seed & 7) < 3 ? 1.0 : 0.38;
+}
+
+// Keep the recording signal at tape resolution; gameplay HUD is drawn afterwards.
+PGraphics tapeFrame;
+PImage tapeSource, tapeOutput;
+final int TAPE_LINES = 480;
+
+// Processing OpenGL cache bridge: version-sensitive. Recheck this and meterCamera
+// when upgrading Processing; the bridge avoids a full-frame CPU readback.
+void applyTapeTo(PGraphics target) {
+  int h = min(TAPE_LINES, target.height), w = max(1, round(target.width * h / float(target.height)));
+  if (tapeFrame == null || tapeFrame.width != w || tapeFrame.height != h) {
+    if (tapeFrame != null) tapeFrame.dispose();
+    tapeFrame = createGraphics(w, h, P2D);
+    tapeFrame.smooth(2);
+  }
+  tape.set("lumaBlur", 0.85);
+  tape.set("chromaBlur", 3.2);
+  tape.set("chromaShift", 1.0);
+  tape.set("sharpen", 0.28);
+  tape.set("sat", 1.0);
+  // Resolve the active source before changing framebuffers. A plain cached image
+  // prevents Processing from trying to copy the new framebuffer as the source.
+  processing.opengl.PGraphicsOpenGL source = (processing.opengl.PGraphicsOpenGL)target;
+  source.flush();
+  processing.opengl.Texture sourceTexture = source.getTexture();
+  if (tapeSource == null) { tapeSource = new PImage(); tapeSource.parent = this; tapeSource.format = ARGB; }
+  tapeSource.width = tapeSource.pixelWidth = sourceTexture.width;
+  tapeSource.height = tapeSource.pixelHeight = sourceTexture.height;
+  tapeSource.setModified(false);
+  ((processing.opengl.PGraphicsOpenGL)tapeFrame).setCache(tapeSource, sourceTexture);
+  tapeFrame.beginDraw();
+  tapeFrame.imageMode(CORNER);
+  tapeFrame.noTint();
+  tapeFrame.blendMode(REPLACE);
+  tapeFrame.image(tapeSource, 0, 0, w, h);
+  tapeFrame.blendMode(BLEND);
+  tapeFrame.filter(tape);
+  tapeFrame.endDraw();
+  // Restore the caller's viewport, including offscreen render targets.
+  source.beginPGL(); source.endPGL();
+  processing.opengl.Texture signal = ((processing.opengl.PGraphicsOpenGL)tapeFrame).getTexture(false);
+  if (tapeOutput == null) { tapeOutput = new PImage(); tapeOutput.parent = this; tapeOutput.format = ARGB; }
+  tapeOutput.width = tapeOutput.pixelWidth = signal.width;
+  tapeOutput.height = tapeOutput.pixelHeight = signal.height;
+  tapeOutput.setModified(false);
+  source.setCache(tapeOutput, signal);
+  target.pushStyle();
+  target.imageMode(CORNER);
+  target.noTint();
+  target.image(tapeOutput, 0, 0, target.width, target.height);
+  target.popStyle();
+}
+
+// New runs bake once while loading. Opened passages rebuild in small main-thread
+// slices, retaining complete lightmaps until both replacement atlases are ready.
+SurfaceBake surfaceBake;
+boolean giBakeQueued;
+
+void bakeGI() {
+  giBakeQueued=false;
+  SurfaceBake job=new SurfaceBake(); surfaceBake=null;
+  while (!job.done) job.advance(Long.MAX_VALUE);
+}
+
+void queueGIBake() { giBakeQueued=true; }
+
+void advanceGIBake() {
+  if (giBakeQueued) { giBakeQueued=false; surfaceBake=new SurfaceBake(); }
+  if (surfaceBake==null) return;
+  surfaceBake.advance(System.nanoTime()+2000000L);
+  if (surfaceBake.done) surfaceBake=null;
+}
+
+class SurfaceBake {
+  int stage, cursor, bounce, count;
+  float[] redL,greenL,blueL,nr,ng,nb,nextField;
+  int[] floorPixels,wallPixels;
+  boolean done;
+  SurfaceBake() {
+    buildLightPatches(); count=giPatches.size();
+    redL=new float[count]; greenL=new float[count]; blueL=new float[count];
+    nr=new float[count]; ng=new float[count]; nb=new float[count];
+    floorPixels=new int[giSize*giSize*2]; wallPixels=new int[giWallIds.length]; nextField=new float[giSize*giSize];
+    java.util.Arrays.fill(floorPixels,0xff000000); java.util.Arrays.fill(wallPixels,0xff000000);
+  }
+  void advance(long deadline) {
+    while (!done && System.nanoTime()<deadline) {
+      if (stage==0) {
+        int end=min(count,cursor+16);
+        for (;cursor<end;cursor++) {
+          LightPatch s=giPatches.get(cursor); bakePatchDirect(s);
+          float rotation=((cursor*0.61803398875)%1)*TWO_PI;
+          for (int k=0;k<GI_RAYS;k++) {
+            float r=sqrt((k+0.5)/GI_RAYS),theta=k*2.39996323+rotation;
+            float u=r*cos(theta),v=r*sin(theta),w=sqrt(max(0,1-r*r));
+            float dx,dy,dz;
+            if (s.nz!=0) { dx=u;dy=v;dz=w*s.nz; }
+            else { dx=w*s.nx-u*s.ny;dy=w*s.ny+u*s.nx;dz=v; }
+            s.hits[k]=traceLightPatch(s.x+s.nx*0.75,s.y+s.ny*0.75,s.z+s.nz*0.75,dx,dy,dz);
+          }
+          redL[cursor]=s.dr*s.r; greenL[cursor]=s.dg*s.g; blueL[cursor]=s.db*s.b;
+        }
+        if (cursor==count) { cursor=0;stage=1; }
+      } else if (stage==1) {
+        int end=min(count,cursor+128);
+        for (;cursor<end;cursor++) {
+          LightPatch s=giPatches.get(cursor);float r=0,g=0,b=0;
+          for (int hit:s.hits) if (hit>=0) { r+=redL[hit];g+=greenL[hit];b+=blueL[hit]; }
+          s.ir=r/GI_RAYS;s.ig=g/GI_RAYS;s.ib=b/GI_RAYS;
+          nr[cursor]=s.r*(s.dr+s.ir);ng[cursor]=s.g*(s.dg+s.ig);nb[cursor]=s.b*(s.db+s.ib);
+        }
+        if (cursor==count) {
+          float[] swap=redL;redL=nr;nr=swap;swap=greenL;greenL=ng;ng=swap;swap=blueL;blueL=nb;nb=swap;
+          cursor=0;if (++bounce==GI_BOUNCES) stage=2;
+        }
+      } else if (stage==2) {
+        int total=giSize*giSize,end=min(total,cursor+16);
+        for (;cursor<end;cursor++) {
+          int x=cursor%giSize,y=cursor/giSize;
+          floorPixels[cursor]=floorBouncePixel(x,y,0,nextField);
+          floorPixels[cursor+total]=floorBouncePixel(x,y,1,nextField);
+        }
+        if (cursor==total) { cursor=0;stage=3; }
+      } else if (stage==3) {
+        int end=min(wallPixels.length,cursor+512);
+        for (;cursor<end;cursor++) wallPixels[cursor]=wallBouncePixel(cursor);
+        if (cursor==wallPixels.length) { cursor=0;stage=4; }
+      } else {
+        // Commit only finished maps; shader readers never see half-built data.
+        if (giTex==null||giTex.width!=giSize) giTex=createImage(giSize,giSize*2,RGB);
+        giTex.loadPixels();arrayCopy(floorPixels,giTex.pixels);giTex.updatePixels();
+        int width=4*(giWallSize+1),height=giWallSize*GI_LAYERS;
+        if (wallGI==null||wallGI.width!=width) wallGI=createImage(width,height,RGB);
+        wallGI.loadPixels();arrayCopy(wallPixels,wallGI.pixels);wallGI.updatePixels();
+        giField=nextField;buildDynamicGIWeights();updateDynamicGI(true);giPlacementReady=true;done=true;
+      }
+    }
+  }
+}
+
+int floorBouncePixel(int x,int y,int face,float[] field) {
+  float unit=CELL/GI_RES,px=(x+0.5)*unit,py=(y+0.5)*unit;
+  if (isWall(cellOf(px),cellOf(py))||hitsWallSlab(px,py,0.01)) return 0xff000000;
+  int cx=floor(px/GI_PATCH),cy=floor(py/GI_PATCH);
+  float r=0,g=0,b=0,weight=0;
+  for (int yy=max(0,cy-1);yy<=min(giFloorSize-1,cy+1);yy++) for (int xx=max(0,cx-1);xx<=min(giFloorSize-1,cx+1);xx++) {
+    int id=giFloorIds[face*giFloorSize*giFloorSize+yy*giFloorSize+xx];if (id<0) continue;
+    LightPatch p=giPatches.get(id);
+    float w=max(0,1-abs(px-p.x)/(GI_PATCH*1.25))*max(0,1-abs(py-p.y)/(GI_PATCH*1.25));
+    if (w<=0||!lineOfSight(px,py,p.x,p.y)) continue;
+    r+=p.ir*w;g+=p.ig*w;b+=p.ib*w;weight+=w;
+  }
+  if (weight>0) { r/=weight;g/=weight;b/=weight; }
+  if (face==0) field[y*giSize+x]=0.299*r+0.587*g+0.114*b;
+  return encodeBounce(r,g,b);
+}
+
+int wallBouncePixel(int id) {
+  if (giWallIds[id]<0) return 0xff000000;
+  LightPatch p=giPatches.get(giWallIds[id]);
+  int plane=id%(giWallSize+1),q=id/(giWallSize+1),face=q%4;
+  q/=4;int along=q%giWallSize,h=q/giWallSize;
+  float r=p.ir*4,g=p.ig*4,b=p.ib*4,w=4;
+  for (int d=-1;d<=1;d+=2) {
+    if (along+d>=0&&along+d<giWallSize) {
+      int neighbor=giWallIds[giWallIndex(face,plane,along+d,h)];
+      if (neighbor>=0) { LightPatch v=giPatches.get(neighbor);r+=v.ir;g+=v.ig;b+=v.ib;w++; }
+    }
+    if (h+d>=0&&h+d<GI_LAYERS) {
+      int neighbor=giWallIds[giWallIndex(face,plane,along,h+d)];
+      if (neighbor>=0) { LightPatch v=giPatches.get(neighbor);r+=v.ir;g+=v.ig;b+=v.ib;w++; }
+    }
+  }
+  return encodeBounce(r/w,g/w,b/w);
+}
+
+// Meter only the rendered world, before lens/tape/OSD. The tiny GPU reduction
+// reads 48 luminance samples at 8 Hz, not a full-resolution CPU screenshot.
+PGraphics meterFrame;
+PImage meterSource;
+PShader meterShader;
+int meterNext;
+float cameraExposureTarget = 1;
+
+String[] METER_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture;",
+  "uniform float appliedExposure;",
+  "varying vec4 vertTexCoord;",
+  "void main() {",
+  "  vec2 tile = floor(vertTexCoord.st * vec2(8.0, 6.0));",
+  "  float result = 0.0;",
+  "  for (int y=0; y<4; y++) for (int x=0; x<4; x++) {",
+  "    vec2 uv = (tile + (vec2(float(x),float(y)) + 0.5)/4.0) / vec2(8.0,6.0);",
+  "    vec3 signal = pow(texture2D(texture, uv).rgb, vec3(2.2));",
+  "    vec3 linear = -log(max(vec3(1.0)-signal, vec3(0.005))) / max(appliedExposure*1.6, 0.01);",
+  "    float luminance = dot(linear, vec3(0.2126,0.7152,0.0722));",
+  "    result += clamp((log2(max(luminance,0.00024414)) + 12.0)/16.0,0.0,1.0);",
+  "  }",
+  "  gl_FragColor=vec4(vec3(result/16.0),1.0);",
+  "}"
+};
+
+// Uses the same version-sensitive OpenGL texture-cache bridge as applyTapeTo.
+void meterCamera(PGraphics target) {
+  int now=millis(); if (now<meterNext) return; meterNext=now+125;
+  if (meterFrame==null) {
+    meterFrame=createGraphics(8,6,P2D); meterFrame.noSmooth();
+    meterShader=new PShader(this,POST_VERT,METER_FRAG);
+  }
+  processing.opengl.PGraphicsOpenGL source=(processing.opengl.PGraphicsOpenGL)target;
+  source.flush(); processing.opengl.Texture signal=source.getTexture();
+  if (meterSource==null) { meterSource=new PImage(); meterSource.parent=this; meterSource.format=ARGB; }
+  meterSource.width=meterSource.pixelWidth=signal.width; meterSource.height=meterSource.pixelHeight=signal.height;
+  meterSource.setModified(false); ((processing.opengl.PGraphicsOpenGL)meterFrame).setCache(meterSource,signal);
+  meterShader.set("appliedExposure",EXPOSURE_BASE*exposureAdapt);
+  meterFrame.beginDraw(); meterFrame.imageMode(CORNER); meterFrame.noTint(); meterFrame.blendMode(REPLACE);
+  meterFrame.shader(meterShader); meterFrame.image(meterSource,0,0,8,6); meterFrame.resetShader(); meterFrame.endDraw();
+  meterFrame.loadPixels(); source.beginPGL(); source.endPGL();
+  cameraExposureTarget=exposureFromMeter(meterFrame.pixels);
+}
+
+float exposureFromMeter(int[] pixels) {
+  float[] values=new float[48];
+  for (int i=0;i<48;i++) values[i]=((pixels[i]>>16)&255)/255.0*16-12;
+  float[] sorted=values.clone(); java.util.Arrays.sort(sorted);
+  float sum=0,weights=0,lo=sorted[2],hi=sorted[43];
+  for (int y=0;y<6;y++) for (int x=0;x<8;x++) {
+    float w=1-0.5*constrain(sq((x-3.5)/4)+sq((y-2.5)/3),0,1);
+    sum+=constrain(values[y*8+x],lo,hi)*w; weights+=w;
+  }
+  float sceneLuma=pow(2,sum/weights);
+  // A bounded camcorder gain preserves dark rooms instead of normalizing them
+  // to daylight. Real meter input makes looking into a bright bay matter.
+  return constrain(0.23/max(sceneLuma,0.01),0.72,1.65);
 }
