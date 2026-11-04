@@ -1,4 +1,4 @@
-// BACKROOMS: Escape from the Nerdolas — v1.2
+// BACKROOMS: Escape from the Nerdolas — v1.3
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
@@ -10,12 +10,16 @@ import ddf.minim.ugens.*;
 import ddf.minim.spi.*;
 import com.jogamp.newt.opengl.GLWindow;
 
+// ---------------- developer tools ----------------
+final boolean ENABLE_VISUAL_DEBUG = true; // false: disable the visual debug panel entirely
+// F10 (or F9 when the OS captures F10) opens/closes; Esc closes; arrows / mouse adjust; Tab changes page.
+
 // ---------------- tuning knobs ----------------
 int GRID = 25;                     // floor sampling grid (odd) — changes per mode
 final int MAX_GRID     = 37;
 final int GRID_ENDLESS = 25, GRID_DAY = 31, GRID_FINAL = 37;
 final float CELL         = 400;    // size of one cell in world units
-final float WALL_H       = 300;    // ceiling height
+final float WALL_H       = 320;    // ceiling height
 final float EYE_H        = 165;    // camera height
 final float PLAYER_R     = 60;     // player collision radius
 final float WALK_SPEED   = 260;    // units per second
@@ -23,28 +27,75 @@ final float SPRINT_SPEED = 440;
 final float STAMINA_MAX  = 2.5;    // seconds of sprint
 final float ENEMY_START  = 190;
 final float ENEMY_MAX    = 400;
-final float ENEMY_RAMP   = 1.4;    // enemy speed gained per second survived
+final float ENEMY_RAMP   = 3.5;    // enemy speed gained per second survived
 final float GRACE_TIME   = 3;      // seconds before the enemies start hunting
 final float KILL_DIST    = 110;
 final float MOUSE_SENS   = 0.0025;
 
 // ---------------- visuals ----------------
-final float FOG_DIST      = 99999; // so basically no fog
-final float EXPOSURE_BASE = 0.72;
+final float FOG_DIST      = 99999;
+final float EXPOSURE_BASE = 0.60;
+final float CEILING_SPILL_POWER = 0.06, CEILING_SPILL_RADIUS = 90;
+final float WALL_CEILING_BOUNCE = 0.06;
+final float PANEL_FRAME_WIDTH = 2.5; // 2.5 cm trim, flush within 8 mm of the ceiling
+// ---------------- camcorder mic wind ----------------
+final float MIC_WIND_GAIN   = 0.30;  // overall level into the FX bus
+final float MIC_WIND_BASS   = 1.35;  // housing resonance: 0 thin, 1 camcorder boom, 2 huge
+final float MIC_WIND_SPRINT_BASS = 1.2; // extra low-end resonance at full sprint
+final float MIC_WIND_GUST   = 0.0;   // gust, mid, and high-frequency wind contribution
+final float MIC_WIND_DRIVE  = 0.0;   // disable preamp overload and gust crackle
+final float MIC_AGC_DUCK_DB = 9;     // how far the AGC pulls the room tone down under wind
+final float SWING_FULL      = 9;     // rad/s of camera turn that counts as a full swing
+final float FLASH_RUN_WOBBLE = radians(0.65); // maximum horizontal movement while running
 final float BASE_FOV = 50;
 final boolean VOLUMETRIC  = true;
 final boolean SHOW_WET_MASK = false; // true: highlight the procedural wet patches in cyan
-final float VHS_AMOUNT    = 0.15;
+final float VHS_AMOUNT    = 0.12;
 final float HANDHELD      = 0.5;
 final int   OUTLETS       = 26;    // wall props (scaled with map size)
 final int   VENTS         = 12;
-final float LENS_FISHEYE  = 0.2;   // the player's vision (world + hands): barrel distortion
-final float LENS_GRAIN    = 0.005; // film grain on the player's vision (very subtle)
-final float LENS_SOFT     = 0.3;   // grainy micro-blur, a bit softer toward the edges (very subtle)
 final float OSD_FISHEYE   = 0.04;  // the whole camcorder image, on-screen text included
 final int   MAP_FLOATS    = (MAX_GRID * MAX_GRID + 3) / 4;   // 4 cells packed per float
 final int   MAP_VEC4      = (MAP_FLOATS + 3) / 4;
 final float[] PACK        = {1, 17, 289, 4913};             // base-17 packing for the shader grid
+
+// ---------------- the camcorder ----------------
+// Small CCD and zoom lens. FOV determines focal length; no shallow-focus effect.
+final float SENSOR_H_MM = 3.2;
+final int SENSOR_LINES = 480;
+final float LENS_K1 = 0.22, LENS_K2 = 0.03;
+final float LENS_LATERAL_CA = 0.0025;
+final float LENS_F_MIN = 1.6, LENS_F_MAX = 11, LENS_F_REF = 2.0;
+final float LENS_ABERRATION_UM = 1.5;
+final float LENS_FIELD_SOFT = 0.0;
+final float OLPF_PX = 0.05;
+final float LENS_VIG_NATURAL = 0.35, LENS_VIG_MECH = 0.25;
+final float LENS_GLARE = 0.015, LENS_GHOSTS = 0.05;
+final float CAM_SHUTTER = 1 / 60.0;
+// Program AE: mechanical iris first, then automatic gain control (not a battery).
+final float AE_TARGET = 0.30, AE_EV_COMP = 0, AGC_MAX_DB = 6, AGC_STEP_DB = 0;
+final float IRIS_SPEED = 1.5;
+final float IRIS_EASE = 3;
+final float AGC_UP_DB = 5;
+final float AGC_DOWN_DB = 7;
+final boolean SHOW_EXPOSURE_OSD = true;
+final float SENSOR_FULL_WELL = 6000, SENSOR_READ_NOISE = 8;
+final float HOT_PIXELS = 0.0002, CCD_SMEAR = 0.04;
+final float CAM_WB_KELVIN = 6500, CAM_KNEE = 0.88, CAM_KNEE_SLOPE = 0.6;
+final float CAM_WHITE_CLIP = 1.0, CAM_PEDESTAL = 0.015;
+final float CAM_DETAIL = 0.45, CAM_DETAIL_CORING = 0.012, CAM_DETAIL_RADIUS = 1.0;
+// GPU simulation of an SD MPEG-2-style decoded copy (not a video file exporter).
+final boolean CODEC_ON = true;
+final boolean LOW_RES_RECORDING = false; // true: use the deliberately soft legacy recording profile
+final int LOW_RES_LINES = 480;
+final int CODEC_LINES = 1080; // upper bound for the full-resolution modern-camera profile
+final float CODEC_FPS = 0, CODEC_GOP_SECONDS = 0.5, CODEC_QSCALE = 0.4;
+final float CODEC_MOTION_STARVE = 1.2, CODEC_NOISE_STARVE = 0.8, CODEC_SKIP_SAD = 1.5;
+final float GRADE_SATURATION = 1.32, GRADE_DANGER_DESAT = 0.68, GRADE_CONTRAST = 0.40;
+final float GRADE_BRIGHTNESS = 0.0, GRADE_GAMMA = 1.0;
+final float[] GRADE_TINT = {1.10, 1.05, 0.74};
+final float GRADE_VIGNETTE = 0.16, GRADE_BLOOM = 0.06, GRADE_HALATION = 0.025, TAPE_NOISE = 0.009;
+
 
 // ---------------- player ----------------
 final float CROUCH_SPEED = 150;
@@ -154,6 +205,7 @@ final float SIGHT_DARK   = 0.2;    // in pitch dark, sight shrinks to 20% (2 roo
 final float TURN_RATE    = 5;      // how fast they turn their head (rad/s)
 final float DEADEND_DARK = 0.6;    // chance a dead end has no lamp: hiding spots
 final float LAMP_REACH   = 1.2;    // a lamp lights its own room well and the next ones only a little (rooms)
+final boolean DISTANT_SOUNDS = false;
 final float HEAR_SPRINT  = 7;
 final float HEAR_WALK    = 2.5;
 final float TOUCH_CELLS        = 1.2;    // proximity bubble, normal
@@ -229,7 +281,7 @@ int gameMode = FUGA;
 
 final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 final String[] MESES = {"JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"};
-final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "CATÁLOGO", "CONQUISTAS", "SAIR"};
+final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "CATÁLOGO", "CONQUISTAS", "VÍDEO", "SAIR"};
 final String[] CAT_TABS = {"NERDOLAS", "PICHAÇÕES", "ITENS", "ESTATÍSTICAS"};
 
 PImage[] faces = new PImage[NAMES.length];
@@ -253,6 +305,8 @@ Gain fxBus, voiceBus;
 Summer fxMix, voiceMix;
 Oscil hum, hum2, heart;
 Multiplier stepAmp, breathAmp, staticAmp;
+MicWind micWind;
+float runAir = 0, windSwing = 0, windLastYaw, windLastPitch;
 Oscil[] sting = new Oscil[3];
 final float[] STING_F = {196.0, 207.65, 277.18};
 Oscil boom, screech;
@@ -335,14 +389,14 @@ Voice3D[] voices = new Voice3D[NAMES.length];
 Steps3D[] eSteps = new Steps3D[6];
 
 // ---------------- graphics ----------------
-PImage carpet, wall, roof, menuImg, panelTex, certTex, exitTex, staticImg, outletTex, ventTex, pucprBg;
+PImage carpet, wall, roof, menuImg, panelTex, panelFrameTex, certTex, exitTex, staticImg, outletTex, ventTex, pucprBg;
 PImage[] itemTex = new PImage[ITEM_NAMES.length];
 PImage[] graffiti = new PImage[WALL_MSGS.length];
 PShape level;
 PShader world, post, lens, tape;
 GLWindow win;
 PFont fontBig, fontUI, fontMono, fontGraffiti, fontHud, fontMail;
-float exposureAdapt = 1, camGain = 0;
+float exposureAdapt = 1;
 float camX, camY, camZ, camDX, camDY, camDZ;
 
 boolean[][] solid;
@@ -540,12 +594,13 @@ float stepEnv, hbPhase, breathPhase, staticBurst;
 float frameDt;
 
 // ---------------- camera-mounted light ----------------
-// 100 world units = 1 m. Compact neutral-white flashlight with a focused beam.
+// 100 world units = 1 m. A broad soft video light, with no hand offset, inertia,
+// reflector rings or illuminated dust cone. F switches the light immediately.
 final float FLASH_POWER = 1.55;
-final float FLASH_RANGE = 900;       // fades to zero at 9 m
+final float FLASH_RANGE = 900;       // fades to zero at 6 m
 final float FLASH_FALLOFF = 260;     // half-strength distance, 2.6 m
-final float FLASH_INNER_COS = 0.985, FLASH_OUTER_COS = 0.866; // 10° core, 30° soft edge
-final PVector FLASH_COLOR = new PVector(1.0, 0.97, 0.92);
+final float FLASH_INNER_COS = 0.985, FLASH_OUTER_COS = 0.866;
+final PVector FLASH_COLOR = new PVector(1.0, 0.93, 0.80);
 PVector flashPos = new PVector(), flashDir = new PVector(1, 0, 0);
 float cameraRoll = 0, cameraRightX = 0, cameraRightY = 1; // shared camera pose
 
@@ -553,7 +608,7 @@ int lastStep;
 int startMs, deathMs, lastMs, skipMouse, msgUntil;
 
 // ---------------- pause + sound settings ----------------
-final String[] PAUSE_OPTS = {"CONTINUAR", "SOM", "REINICIAR", "MENU PRINCIPAL"};
+final String[] PAUSE_OPTS = {"CONTINUAR", "SOM", "VÍDEO", "REINICIAR", "MENU PRINCIPAL"};
 final String[] VOL_NAMES  = {"GERAL", "AMBIENTE", "EFEITOS", "VOZES"};
 final int V_MASTER = 0, V_AMB = 1, V_FX = 2, V_VOICE = 3;
 int[] vol = {100, 100, 100, 100};    // percent per channel, saved in settings.txt
@@ -615,6 +670,9 @@ String[] WORLD_FRAG = {
   "uniform vec4 mapData[" + MAP_VEC4 + "];",
   "uniform vec4 wallData[" + WALL_VEC4 + "];",
   "uniform float gridSize;",
+  "uniform sampler2D lightingGrid;",
+  "uniform float useLightingGrid;",
+  "uniform sampler2D shadowWalls;",
   "uniform float cellSize;",
   "uniform float wallH;",
   "uniform float wallHalf;",
@@ -637,6 +695,7 @@ String[] WORLD_FRAG = {
   "uniform float giWallSize;",
   "uniform float fogDist;",
   "uniform float volOn;",
+  "uniform float debugNoShadows,debugNoBounce,debugNoAO;",
   "uniform vec3 fogColor;",
   "varying vec4 vertColor;",
   "varying vec4 vertTexCoord;",
@@ -645,6 +704,10 @@ String[] WORLD_FRAG = {
   "const float PI = 3.14159265;",
   "float cellVal(vec2 c) {",
   "  if (c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize) return -1.0;",
+  "  if (useLightingGrid > 0.5) {",
+  "    float code = floor(texture2D(lightingGrid,(c+0.5)/gridSize,-16.0).r*255.0+0.5);",
+  "    return code < 0.5 ? -1.0 : (code-1.0)/15.0;",
+  "  }",
   "  float idx = c.y * gridSize + c.x;",
   "  float fi = floor(idx * 0.25 + 0.01);",
   "  float sub = idx - fi * 4.0;",
@@ -661,6 +724,7 @@ String[] WORLD_FRAG = {
   "float wallCode(vec2 c) {",
   "  if (c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize) return 0.0;",
   "  float idx = c.y * gridSize + c.x;",
+  "  if (useLightingGrid > 0.5) return floor(texture2D(lightingGrid,(c+0.5)/gridSize,-16.0).g*255.0+0.5);",
   "  float fi = floor(idx / 8.0); float sub = mod(idx, 8.0);",
   "  vec4 v = wallData[int(floor(fi / 4.0))]; float r = mod(fi, 4.0);",
   "  float packed = r < 0.5 ? v.x : (r < 1.5 ? v.y : (r < 2.5 ? v.z : v.w));",
@@ -761,6 +825,21 @@ String[] WORLD_FRAG = {
   "  return step(enter, leave + vec4(0.0000001));",
   "}",
   "",
+  "vec4 listedWallVisibility(vec2 origin,vec4 invX,vec4 invY,vec2 low,vec2 high) {",
+  "  float count=floor(texture2D(lightingGrid,(low+0.5)/gridSize,-16.0).b*255.0+0.5);",
+  "  float row=(low.y*gridSize+low.x+0.5)/(gridSize*gridSize);",
+  "  vec4 visible=vec4(1.0); vec2 h=vec2(wallHalf);",
+  "  for(int k=0;k<24;k++) {",
+  "    if(float(k)>=count) break;",
+  "    vec3 slab=floor(texture2D(shadowWalls,vec2((float(k)+0.5)/24.0,row),-16.0).rgb*255.0+0.5);",
+  "    vec2 edge=slab.xy;",
+  "    if(any(greaterThan(edge,high+1.0))) continue;",
+  "    vec2 span=slab.z<1.5?vec2(0.0,1.0):vec2(1.0,0.0);",
+  "    visible*=1.0-wallBoxHits4(origin,invX,invY,edge*cellSize-h,(edge+span)*cellSize+h);",
+  "    if(dot(visible,vec4(1.0))<0.5) break;",
+  "  }",
+  "  return visible;",
+  "}",
   "vec4 lampTransmission(vec3 receiver, vec3 lightPosition) {",
   "  vec2 halfPanel = vec2(1.0 / 12.0) * cellSize;",
   "  vec2 seed = floor(receiver.xy * 0.5) + lightPosition.xy * 0.017;",
@@ -780,6 +859,8 @@ String[] WORLD_FRAG = {
   "  vec4 invX = 1.0 / mix(vec4(0.000001), dx, step(vec4(0.000001), abs(dx)));",
   "  vec4 invY = 1.0 / mix(vec4(0.000001), dy, step(vec4(0.000001), abs(dy)));",
   "  vec2 low = min(first, last), high = max(first, last), h = vec2(wallHalf);",
+  "  if(useLightingGrid>0.5 && all(greaterThanEqual(low,vec2(0.0))) && all(lessThan(low,vec2(gridSize))))",
+  "    return listedWallVisibility(receiver.xy,invX,invY,low,high);",
   "  vec4 visible = vec4(1.0);",
   "  for (int edgeIndex = 0; edgeIndex < 3; edgeIndex++) for (int along = -1; along <= 2; along++) {",
   "    vec2 edge = low + vec2(float(edgeIndex), float(along));",
@@ -793,6 +874,45 @@ String[] WORLD_FRAG = {
   "  return visible;",
   "}",
   "float lampVisibility(vec3 a, vec3 b) { return dot(lampTransmission(a,b),vec4(0.25)); }",
+  "// Four neighbouring fixtures, traced together. All wall slabs are full height,",
+  "// and receiver/source are inside the room, so one shared XY search is exact.",
+  "vec4 fogLampVisibility(vec3 receiver, vec2 base) {",
+  "  if (receiver.z < 0.0 || receiver.z > wallH) return vec4(0.0);",
+  "  vec4 dx=(base.x+vec4(0.5,1.5,0.5,1.5))*cellSize-receiver.x;",
+  "  vec4 dy=(base.y+vec4(0.5,0.5,1.5,1.5))*cellSize-receiver.y;",
+  "  vec4 invX=1.0/mix(vec4(0.000001),dx,step(vec4(0.000001),abs(dx)));",
+  "  vec4 invY=1.0/mix(vec4(0.000001),dy,step(vec4(0.000001),abs(dy)));",
+  "  vec4 visible=vec4(1.0);",
+  "  vec2 h=vec2(wallHalf);",
+  "  if(useLightingGrid>0.5 && all(greaterThanEqual(base,vec2(0.0))) && all(lessThan(base,vec2(gridSize))))",
+  "    return listedWallVisibility(receiver.xy,invX,invY,base,base+vec2(1.0));",
+  "  for (int edgeIndex=0;edgeIndex<3;edgeIndex++) for (int along=-1;along<=2;along++) {",
+  "    vec2 edge=base+vec2(float(edgeIndex),float(along));",
+  "    if (wallXAt(edge)>0.5)",
+  "      visible*=1.0-wallBoxHits4(receiver.xy,invX,invY,edge*cellSize-h,(edge+vec2(0.0,1.0))*cellSize+h);",
+  "    edge=base+vec2(float(along),float(edgeIndex));",
+  "    if (wallYAt(edge)>0.5)",
+  "      visible*=1.0-wallBoxHits4(receiver.xy,invX,invY,edge*cellSize-h,(edge+vec2(1.0,0.0))*cellSize+h);",
+  "    if (dot(visible,vec4(1.0))<0.5) return vec4(0.0);",
+  "  }",
+  "  return visible;",
+  "}",
+  "",
+  "float fogLampLight(vec3 p) {",
+  "  // Centres, not containing cells. Every source fades to zero with zero slope",
+  "  // before the source list changes, eliminating vertical box faces in the air.",
+  "  vec2 q=p.xy/cellSize-0.5,base=floor(q),f=fract(q);",
+  "  f=f*f*(3.0-2.0*f);",
+  "  vec4 weights=vec4((1.0-f.x)*(1.0-f.y),f.x*(1.0-f.y),(1.0-f.x)*f.y,f.x*f.y);",
+  "  vec4 power=max(vec4(0.0),vec4(cellVal(base),cellVal(base+vec2(1.0,0.0)),",
+  "      cellVal(base+vec2(0.0,1.0)),cellVal(base+vec2(1.0,1.0))));",
+  "  if (dot(weights,power)<0.00001) return 0.0;",
+  "  vec4 dx=(base.x+vec4(0.5,1.5,0.5,1.5))*cellSize-p.x;",
+  "  vec4 dy=(base.y+vec4(0.5,0.5,1.5,1.5))*cellSize-p.y;",
+  "  float dz=lampZ-p.z;",
+  "  vec4 atten=1.0/(1.0+(dx*dx+dy*dy+dz*dz)/48400.0);",
+  "  return dot(weights*power*atten,debugNoShadows>0.5?vec4(1.0):fogLampVisibility(p,base));",
+  "}",
   "",
   "float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
   "float vnoise(vec2 p) {",
@@ -812,6 +932,7 @@ String[] WORLD_FRAG = {
   "}",
   // PROCEDURAL WET-PATCH MASK: world-space scale 260, onset 0.60, full wetness 0.72.
   "float wetPatchMask(vec2 p) { return smoothstep(0.66, 0.76, fbm(p / 260.0 + 3.7)); }",
+  "float ceilingSpill(vec2 delta) { return " + CEILING_SPILL_POWER + " * exp(-dot(delta,delta)/(2.0*" + CEILING_SPILL_RADIUS + "*" + CEILING_SPILL_RADIUS + ")); }",
   "float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }",
   "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }",
   "vec3 brdf(vec3 N, vec3 V, vec3 L, vec3 Ls, vec3 albedo, float rough, float f0) {",
@@ -856,7 +977,16 @@ String[] WORLD_FRAG = {
   "  return result*texture2D(giDynamic,uv).r;",
   "}",
   "",
+  "vec4 carpetSample(vec2 uv,float bias) {",
+  "  vec2 edge=min(fract(uv),1.0-fract(uv));",
+  "  vec2 weight=smoothstep(vec2(0.06),vec2(0.18),edge);",
+  "  vec4 c00=texture2D(texture,uv,bias),c10=texture2D(texture,uv+vec2(0.5,0.0),bias);",
+  "  vec4 c01=texture2D(texture,uv+vec2(0.0,0.5),bias),c11=texture2D(texture,uv+vec2(0.5),bias);",
+  "  return mix(mix(c11,c01,weight.x),mix(c10,c00,weight.x),weight.y);",
+  "}",
   "void main() {",
+  "  vec2 uvDx=dFdx(vertTexCoord.st),uvDy=dFdy(vertTexCoord.st);",
+  "  vec3 posDx=dFdx(wPos),posDy=dFdy(wPos);",
   "  vec4 tex = texture2D(texture, vertTexCoord.st) * vertColor;",
   "  if (tex.a < 0.35) discard;",
   "  vec3 V = camPos - wPos;",
@@ -871,6 +1001,9 @@ String[] WORLD_FRAG = {
   "    else if (an.x >= an.y) gn = vec3(sign(gn.x), 0.0, 0.0);",
   "    else gn = vec3(0.0, sign(gn.y), 0.0);",
   "  }",
+  "  bool carpetSurface=isLevel && wallpaper>0.5 && gn.z>0.5;",
+  "  vec2 surfaceUV=carpetSurface?wPos.xy/cellSize:vertTexCoord.st;",
+  "  if(carpetSurface)tex=carpetSample(surfaceUV,0.0)*vertColor;",
   "  vec3 albedo = pow(tex.rgb, vec3(2.2));",
   "  float rough = 0.65;",
   "  float f0 = 0.04;",
@@ -883,15 +1016,15 @@ String[] WORLD_FRAG = {
   "      float mott = fbm(wPos.xy / 140.0);",
   "      albedo = vec3(0.13, 0.105, 0.065) * fiber * wear * (0.85 + 0.3 * mott);",
   "      wet = wetPatchMask(wPos.xy);",
-  "      albedo *= mix(1.0, 0.62, wet);",
-  "      albedo = mix(albedo, vec3(lum(albedo)), 0.25 * wet);",   // damp fibers lose a little colour
+  "      albedo *= mix(1.0, 0.82, wet);",
+  "      albedo = mix(albedo, vec3(lum(albedo)), 0.10 * wet);",   // damp fibers lose a little colour
   "      rough = mix(0.98, 0.72, wet);",                          // was 0.42: matted, not glossy
   "      f0 = mix(0.012, 0.022, wet);",                           // was 0.05
   "      bump = mix(0.16, 0.06, wet);",
   "    } else if (gn.z < -0.5) {",
   "      vec3 tileAvg = pow(texture2D(texture, vertTexCoord.st, 8.0).rgb,vec3(2.2));",
   "      albedo = mix(tileAvg,albedo,0.35);",
-  "      albedo *= (0.6 / max(lum(tileAvg),0.05)) * vec3(1.0,1.0,0.98);",
+  "      albedo *= (0.42 / max(lum(tileAvg),0.05)) * vec3(1.0,1.0,0.98);",
   // wet patches now also have a leak on the ceiling
   "      float s = fbm(wPos.xy / 260.0 + 3.7);",          // same field as wetPatchMask
   "      float stain = smoothstep(0.70, 0.80, s);",
@@ -927,17 +1060,17 @@ String[] WORLD_FRAG = {
   "  vec3 n = gn;",
   "  float bumpFade = 1.0 - smoothstep(350.0, 1100.0, dist);",
   "  if (bump > 0.0 && bumpFade > 0.0) {",
-  "    vec2 uv = vertTexCoord.st;",
-  "    float h0 = lum(texture2D(texture, uv, 1.0).rgb);",
-  "    float hx = lum(texture2D(texture, uv + vec2(texOffset.x * 2.0, 0.0), 1.0).rgb);",
-  "    float hy = lum(texture2D(texture, uv + vec2(0.0, texOffset.y * 2.0), 1.0).rgb);",
+  "    vec2 uv = surfaceUV;",
+  "    vec2 ox=vec2(texOffset.x*2.0,0.0),oy=vec2(0.0,texOffset.y*2.0);",
+  "    float h0=lum((carpetSurface?carpetSample(uv,1.0):texture2D(texture,uv,1.0)).rgb);",
+  "    float hx=lum((carpetSurface?carpetSample(uv+ox,1.0):texture2D(texture,uv+ox,1.0)).rgb);",
+  "    float hy=lum((carpetSurface?carpetSample(uv+oy,1.0):texture2D(texture,uv+oy,1.0)).rgb);",
   "    if (isLevel && abs(gn.z)<0.5) {",
   "      h0=0.0; hx=0.015*(vnoise(wPos.xy*0.7+wPos.z)-0.5); hy=0.015*(vnoise(wPos.yx*0.8-wPos.z)-0.5);",
   "    }",
-  "    vec3 dp1 = dFdx(wPos);",
-  "    vec3 dp2 = dFdy(wPos);",
-  "    vec2 duv1 = dFdx(uv);",
-  "    vec2 duv2 = dFdy(uv);",
+  "    vec3 dp1=posDx,dp2=posDy;",
+  "    vec2 duv1=carpetSurface?posDx.xy/cellSize:uvDx;",
+  "    vec2 duv2=carpetSurface?posDy.xy/cellSize:uvDy;",
   "    vec3 dp2perp = cross(dp2, gn);",
   "    vec3 dp1perp = cross(gn, dp1);",
   "    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;",
@@ -947,7 +1080,7 @@ String[] WORLD_FRAG = {
   "    vec3 nts = normalize(vec3((h0 - hx) * s, (h0 - hy) * s, 1.0));",
   "    n = normalize(T * im * nts.x + B * im * nts.y + gn * nts.z);",
   "  }",
-  "  vec3 lampCol = vec3(1.0, 0.98, 0.80);",
+  "  vec3 lampCol = vec3(1.0, 0.90, 0.68);",
   "  vec3 direct = vec3(0.0);",
   "  float irr = 0.0;",
   "  vec2 a = wPos.xy + gn.xy * 2.0;",
@@ -966,12 +1099,11 @@ String[] WORLD_FRAG = {
   "      float hd = length(b - wPos.xy);",
   "      if (hd >= hr) continue;",
   "      vec3 receiver=vec3(a,wPos.z+gn.z*2.0);",
-  "      vec4 visibility=lampTransmission(receiver,vec3(b,lampZ));",
+  "      vec4 visibility=debugNoShadows>0.5?vec4(1.0):lampTransmission(receiver,vec3(b,lampZ));",
   "      float vis=dot(visibility,vec4(0.25));",
   "      if (vis <= 0.0) continue;",
   "      if (gn.z < -0.5) {",
-  "        float pd=length(max(abs(wPos.xy-b)-panelHalf,vec2(0.0)));",
-  "        direct+=albedo*lampCol*(p*0.9*exp(-pd/60.0)*vis);",
+  "        direct+=albedo*lampCol*(p*ceilingSpill(wPos.xy-b)*vis);",
   "        continue;",
   "      }",
   "      vec3 Lp = vec3(b, lampZ) - wPos;",
@@ -1000,7 +1132,11 @@ String[] WORLD_FRAG = {
   "      irr += p * att * vis;",
   "    }",
   "  }",
-  "  vec3 ambient=albedo*surfaceBounce(wPos,gn,isLevel);",
+  "  vec3 ambient=debugNoBounce>0.5?vec3(0.0):albedo*surfaceBounce(wPos,gn,isLevel);",
+  "  if (isLevel && abs(gn.z)<0.5) {",
+  "    float ceilingLift=smoothstep(0.62,1.0,wPos.z/wallH);",
+  "    ambient+=albedo*lampCol*" + WALL_CEILING_BOUNCE + "*ceilingLift;",
+  "  }",
   "",
   "  vec3 receiver = vec3(a, wPos.z + gn.z * 2.0);",
   "  vec3 Lf = flashPos - wPos;",
@@ -1008,12 +1144,12 @@ String[] WORLD_FRAG = {
   "  vec3 Lfn = Lf / max(df, 0.001);",
   "  float prof = flash > 0.0001 && df < flashRange ? cameraLightProfile(-Lfn) : 0.0;",
   "  if (prof > 0.002) {",
-  "    float shadow = wallVisibility(receiver, flashPos);",
+  "    float shadow = debugNoShadows>0.5?1.0:wallVisibility(receiver, flashPos);",
   "    float atten = cameraLightAttenuation(df);",
   "    direct += brdf(n, Vn, Lfn, Lfn, albedo, rough, f0) * flashCol * (PI * flash * prof * atten * shadow);",
   "  }",
   "  float ao = 1.0;",
-  "  if (isLevel) {",
+  "  if (isLevel && debugNoAO<0.5) {",
   "    if (abs(gn.z) > 0.5) {",
   "      float distanceToWall = nearestWall(wPos.xy);",
   "      ao = mix(0.78, 1.0, smoothstep(0.0, 18.0, distanceToWall));",
@@ -1034,14 +1170,9 @@ String[] WORLD_FRAG = {
   "    for (int s = 0; s < 10; s++) {",
   "      float tt = (float(s) + jit) / 10.0 * rayLen;",
   "      vec3 sp = camPos - Vn * tt;",
-  "      vec2 sc = floor(sp.xy / cellSize);",
-  "      float lp = cellVal(sc);",
-  "      if (lp <= 0.01) continue;",
-  "      vec3 dlp = vec3((sc + 0.5) * cellSize, lampZ) - sp;",
-  "      float visibility = wallVisibility(sp, sp + dlp);",
-  "      scat += visibility * lp / (1.0 + dot(dlp, dlp) / 48400.0);",
+  "      scat += fogLampLight(sp);",
   "    }",
-  "    col += lampCol * scat * rayLen / 10.0 * 0.00008;",
+  "    col += lampCol * scat * rayLen / 10.0 * 0.000018;",
   "  }",
   "  col = 1.0 - exp(-col * exposure * 1.6);",
   "  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);",
@@ -1068,39 +1199,86 @@ String[] POST_VERT = {
 String[] LENS_FRAG = {
   "#define PROCESSING_TEXTURE_SHADER",
   "#ifdef GL_ES",
-  "precision mediump float;",
+  "precision highp float;",
   "#endif",
   "uniform sampler2D texture;",
   "uniform vec2 texOffset;",
-  "uniform float time;",
-  "uniform float fisheye;",
-  "uniform float aspect;",
-  "uniform float grain;",
-  "uniform float soft;",
+  "uniform float time, aspect, k1, k2, fovScale, edge, lateralCA, blurPx, fieldSoft;",
+  "uniform vec2 motion;",
+  "uniform float vigNatural, vigMech, glare, ghost, smear, gain, fullWell, readNoise, hotRate;",
+  "uniform vec2 sensorRes;",
+  "uniform vec3 wb;",
+  "uniform float detail, coring, detailPx, knee, kneeSlope, whiteClip, pedestal;",
   "varying vec4 vertColor;",
   "varying vec4 vertTexCoord;",
-  "float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }",
+  "float rnd(vec2 p) { return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }",
+  "float lum(vec3 c) { return dot(c,vec3(0.299,0.587,0.114)); }",
+  "float distortion(vec2 c) {",
+  "  vec2 p=vec2(c.x*aspect,c.y)*fovScale;",
+  "  float r2=dot(p,p);",
+  "  return (1.0+k1*r2+k2*r2*r2)/edge;",
+  "}",
+  "vec2 toRender(vec2 c) { return 0.5+c*distortion(c); }",
+  "// Stochastic offsets must not select stale framebuffer mip levels. The lens",
+  "// explicitly integrates its own footprint at level zero.",
+  "vec3 tap(vec2 uv) { return texture2D(texture,clamp(uv,texOffset,1.0-texOffset),-16.0).rgb; }",
   "void main() {",
-  "  vec2 c0 = vertTexCoord.st - 0.5;",
-  "  vec2 ca = vec2(c0.x * aspect, c0.y);",
-  "  float r2 = dot(ca, ca);",
-  "  float edge = 1.0 + fisheye * 0.25 * (aspect * aspect + 1.0);",
-  "  vec2 uv = 0.5 + c0 * (1.0 + fisheye * r2) / edge;",
-  "  float t = fract(time * 7.31) * 91.7;",
-
-  "  float rad = soft * (0.6 + 1.6 * r2);",                                   // softer toward the edges
-  "  vec2 j = texOffset * vec2(rad, max(rad, 0.75));",
-  "  vec2 lo = texOffset, hi = vec2(1.0) - texOffset;",
-  "  vec3 col = (texture2D(texture, clamp(uv + j, lo, hi)).rgb + texture2D(texture, clamp(uv - j, lo, hi)).rgb) * 0.275 + texture2D(texture, uv).rgb * 0.45;",
-  "  vec3 b = texture2D(texture, clamp(uv + texOffset * vec2( 0.8,  0.8), lo, hi)).rgb",
-  "         + texture2D(texture, clamp(uv + texOffset * vec2(-0.8,  0.8), lo, hi)).rgb",
-  "         + texture2D(texture, clamp(uv + texOffset * vec2( 0.8, -0.8), lo, hi)).rgb",
-  "         + texture2D(texture, clamp(uv + texOffset * vec2(-0.8, -0.8), lo, hi)).rgb;",
-  "  col = mix(col, b * 0.25, 0.15);",
-  "  float l = dot(col, vec3(0.299, 0.587, 0.114));",
-  "  float g = rnd(gl_FragCoord.xy + t * 13.0) + rnd(gl_FragCoord.xy * 1.7 - t) - 1.0;",   // triangular grain
-  "  col += g * grain * (0.35 + 1.3 * l * (1.0 - l));",                       // lives in the midtones
-  "  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);",
+  "  vec2 c0=vertTexCoord.st-0.5;",
+  "  float t=fract(time*7.31)*91.7, jit=rnd(gl_FragCoord.xy+t);",
+  "  vec2 ca=vec2(c0.x*aspect,c0.y);",
+  "  float rn2=dot(ca,ca)/(0.25*(aspect*aspect+1.0));",
+  "  float sigma=blurPx*(1.0+fieldSoft*rn2);",
+  "  vec3 col=vec3(0.0);",
+  "  for(int k=0;k<12;k++) {",
+  "    float fk=(float(k)+0.5)/12.0, a=float(k)*2.39996+jit*6.28318;",
+  "    vec2 o=vec2(cos(a),sin(a))*sigma*sqrt(-2.0*log(1.0-fk))*texOffset;",
+  "    col+=tap(toRender(c0+o+motion*(fract(fk+jit)-0.5)));",
+  "  }",
+  "  col/=12.0;",
+  "  vec2 g0=toRender(c0);",
+  "  vec3 mid=tap(g0);",
+  "  col.r+=tap(0.5+(g0-0.5)*(1.0+lateralCA)).r-mid.r;",
+  "  col.b+=tap(0.5+(g0-0.5)*(1.0-lateralCA)).b-mid.b;",
+  "  float s2=sqrt(sigma*sigma+detailPx*detailPx),wide=0.0;",
+  "  for(int k=0;k<6;k++) {",
+  "    float a=(float(k)+jit)*1.0472;",
+  "    wide+=lum(tap(toRender(c0+vec2(cos(a),sin(a))*s2*texOffset)));",
+  "  }",
+  "  wide/=6.0;",
+  "  vec3 gh=vec3(0.0);",
+  "  for(int k=0;k<2;k++) {",
+  "    float s=k==0?-0.6:-1.3;",
+  "    vec2 gp=0.5+(g0-0.5)*s+(vec2(rnd(gl_FragCoord.yx+t),jit)-0.5)*24.0*texOffset;",
+  "    float inside=step(abs(gp.x-0.5),0.5)*step(abs(gp.y-0.5),0.5);",
+  "    gh+=inside*max(tap(gp)-0.85,0.0)/0.15*(k==0?vec3(0.45,0.8,1.0):vec3(1.0,0.65,0.35));",
+  "  }",
+  "  float sm=0.0;",
+  "  for(int k=0;k<12;k++) {",
+  "    vec3 s=tap(toRender(vec2(c0.x,(float(k)+jit)/12.0-0.5)));",
+  "    sm+=smoothstep(0.9,1.0,max(s.r,max(s.g,s.b)));",
+  "  }",
+  "  sm/=12.0;",
+  "  // CA subtraction can be negative at a saturated edge; fractional powers must stay finite.",
+  "  vec3 lin=pow(max(col,vec3(0.0)),vec3(2.2))+gh*ghost;",
+  "  vec2 pu=ca*fovScale*distortion(c0)*edge;",
+  "  float cos2=1.0/(1.0+dot(pu,pu));",
+  "  lin*=pow(cos2*cos2,vigNatural)*(1.0-vigMech*smoothstep(0.45,1.0,rn2));",
+  "  lin+=glare+smear*sm;",
+  "  vec2 px=floor(vertTexCoord.st*sensorRes);",
+  "  vec3 n=vec3(rnd(px+t),rnd(px*1.37+t+4.1),rnd(px*0.71-t+9.3))",
+  "        +vec3(rnd(px*1.13-t+2.7),rnd(px+t*1.9+6.2),rnd(px*0.89+t*0.7+1.5))-1.0;",
+  "  float rd=gain*readNoise/fullWell;",
+  "  lin+=n*2.449*sqrt(max(lin,0.0)*gain/fullWell+rd*rd);",
+  "  float hot=step(1.0-hotRate,rnd(px*0.917+31.7));",
+  "  lin+=hot*max(gain-1.0,0.0)*0.03*vec3(rnd(px+1.0),rnd(px+2.0),rnd(px+3.0));",
+  "  lin=clamp(lin,0.0,1.0)*wb;",
+  "  vec3 v=pow(lin,vec3(1.0/2.2));",
+  "  v=mix(v,knee+(v-knee)*kneeSlope,step(knee,v));",
+  "  v=min(v,vec3(whiteClip));",
+  "  float d=lum(col)-wide;",
+  "  v+=detail*sign(d)*max(abs(d)-coring,0.0);",
+  "  v=pedestal+v*(1.0-pedestal);",
+  "  gl_FragColor=vec4(clamp(v,0.0,1.0),1.0);",
   "}"
 };
 
@@ -1112,70 +1290,90 @@ String[] POST_FRAG = {
   "#endif",
   "uniform sampler2D texture;",
   "uniform vec2 texOffset;",
-  "uniform float time;",
-  "uniform float danger;",
-  "uniform float hit;",
-  "uniform float gain;",
-  "uniform float vhs;",
-  "uniform float footage;",
-  "uniform float fisheye;",
-  "uniform float aspect;",
+  "uniform float time,danger,hit,gain,vhs,fisheye,aspect;",
+  "uniform float saturation,contrast,brightness,gammaAdj;",
+  "uniform vec3 tint;",
+  "uniform float vignette,bloomAmt,halation,tapeNoise;",
   "varying vec4 vertColor;",
   "varying vec4 vertTexCoord;",
-  "float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }",
+  "float rnd(vec2 p) { return fract(sin(dot(p,vec2(12.9898,78.233)))*43758.5453); }",
   "void main() {",
-  "  vec2 c0 = vertTexCoord.st - 0.5;",
-  "  vec2 ca = vec2(c0.x * aspect, c0.y);",
-  "  float r2 = dot(ca, ca);",
-  "  float edge = 1.0 + fisheye * 0.25 * (aspect * aspect + 1.0);",
-  "  vec2 uv = 0.5 + c0 * (1.0 + fisheye * r2) / edge;",
-  "  float row = floor(uv.y / texOffset.y / 3.0);",
-  "  float jitter = (rnd(vec2(row, floor(time * 30.0))) - 0.5) * texOffset.x * (30.0 * danger * danger + 60.0 * hit);",
-  "  float band = (1.0 - smoothstep(0.0, 0.025, abs(uv.y - fract(time * 0.11)))) * max(vhs, danger) * 0.6;",
-  "  uv.x += jitter + band * texOffset.x * 4.0;",
-  "  vec2 dir = uv - 0.5;",
-  "  float ab = 0.0006 + 0.008 * danger + 0.03 * hit;",
+  "  vec2 c0=vertTexCoord.st-0.5,ca=vec2(c0.x*aspect,c0.y);",
+  "  float r2=dot(ca,ca),edge=1.0+fisheye*0.25*(aspect*aspect+1.0);",
+  "  vec2 uv=0.5+c0*(1.0+fisheye*r2)/edge;",
+  "  float row=floor(uv.y/texOffset.y/3.0);",
+  "  float jitter=(rnd(vec2(row,floor(time*30.0)))-0.5)*texOffset.x*(30.0*danger*danger+60.0*hit);",
+  "  float band=(1.0-smoothstep(0.0,0.025,abs(uv.y-fract(time*0.11))))*max(vhs,danger)*0.6;",
+  "  uv.x+=jitter+band*texOffset.x*4.0;",
+  "  vec2 dir=uv-0.5;",
+  "  float ab=0.0006+0.008*danger+0.03*hit;",
   "  vec3 col;",
-  "  col.r = texture2D(texture, uv + dir * ab).r;",
-  "  col.g = texture2D(texture, uv).g;",
-  "  col.b = texture2D(texture, uv - dir * ab).b;",
-  "  vec3 bloom = vec3(0.0);",
-  "  for (int k = 0; k < 16; k++) {",
-  "    float a = float(k) * 2.39996;",
-  "    vec2 o = vec2(cos(a), sin(a)) * (3.0 + float(k) * 2.2) * texOffset * 2.0;",
-  "    vec3 s = texture2D(texture, uv + o).rgb;",
-  "    float l = max(max(s.r, s.g), s.b);",
-  "    bloom += s * smoothstep(0.88, 1.0, l) / (1.0 + float(k) * 0.12);",
+  "  col.r=texture2D(texture,uv+dir*ab).r;",
+  "  col.g=texture2D(texture,uv).g;",
+  "  col.b=texture2D(texture,uv-dir*ab).b;",
+  "  vec3 bloom=vec3(0.0);",
+  "  for(int k=0;k<16;k++) {",
+  "    float a=float(k)*2.39996;",
+  "    vec2 o=vec2(cos(a),sin(a))*(3.0+float(k)*2.2)*texOffset*2.0;",
+  "    vec3 s=texture2D(texture,uv+o).rgb;",
+  "    float l=max(max(s.r,s.g),s.b);",
+  "    bloom+=s*smoothstep(0.88,1.0,l)/(1.0+float(k)*0.12);",
   "  }",
-  "  bloom /= 9.0;",
-  "  col += bloom * vec3(0.98, 1.0, 0.88) * mix(0.35, 0.20, footage) + bloom * vec3(0.2, 0.03, 0.0) * mix(0.25, 0.05, footage);",
-  "  float luma = dot(col, vec3(0.299, 0.587, 0.114));",
-  "  col = mix(vec3(luma), col,(mix(0.92, 1.0, footage) - 0.4 * danger) * 1.70);",
-  "  col *= mix(vec3(1.02, 1.0, 0.92), vec3(1.05, 1.02, 0.84), footage);",
-  "  col = mix(col, vec3(luma * 1.2, luma * 0.35, luma * 0.3), 0.35 * hit + 0.15 * danger * danger);",
-  "  col = clamp(col, 0.0, 1.0);",
-  "  col = mix(col, col * col * (3.0 - 2.0 * col), 0.25);",
-  "  col *= 1.0 - vhs * 0.05 * (0.5 + 0.5 * sin(uv.y / texOffset.y * 3.14159));",
-  "  col += band * 0.04;",
-  "  float n1 = rnd(uv * 731.0 + time) - 0.5;",
-  "  float n2 = rnd(uv * 417.0 - time * 1.3) - 0.5;",
-  "  col += vec3(n1, (n1 + n2) * 0.5, n2) * (0.012 + 0.03 * gain) * (1.0 - luma) + n1 * 0.06 * danger;",
-  "  float v = 1.0 - smoothstep(0.35, 1.05, length(dir * vec2(1.2, 1.0)) + 0.15 * danger);",
-  "  col *= mix(0.78, 1.0, v);",
-  "  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);",
+  "  bloom/=9.0;",
+  "  col+=bloom*vec3(0.98,1.0,0.88)*bloomAmt+bloom*vec3(0.2,0.03,0.0)*halation;",
+  "  float luma=dot(col,vec3(0.299,0.587,0.114));",
+  "  col=mix(vec3(luma),col,saturation);",
+  "  col*=tint;",
+  "  col=mix(col,vec3(luma*1.2,luma*0.35,luma*0.3),0.35*hit+0.15*danger*danger);",
+  "  col=clamp(col+brightness,0.0,1.0);",
+  "  col=pow(col,vec3(gammaAdj));",
+  "  col=mix(col,col*col*(3.0-2.0*col),contrast);",
+  "  col*=1.0-vhs*0.05*(0.5+0.5*sin(uv.y/texOffset.y*3.14159));",
+  "  col+=band*0.04;",
+  "  float n1=rnd(uv*731.0+time)-0.5,n2=rnd(uv*417.0-time*1.3)-0.5;",
+  "  col+=vec3(n1,(n1+n2)*0.5,n2)*(tapeNoise+0.03*gain)*(1.0-luma)+n1*0.06*danger;",
+  "  float v=1.0-smoothstep(0.35,1.05,length(dir*vec2(1.2,1.0))+0.15*danger);",
+  "  col*=mix(1.0-vignette,1.0,v);",
+  "  gl_FragColor=vec4(clamp(col,0.0,1.0),1.0);",
   "}"
 };
 
 // =====================================================================
+void settings() {
+  if(START_FULLSCREEN) fullScreen(P3D);
+  else size(1360,900,P3D);
+  pixelDensity(1); noSmooth();
+}
+
 void setup() {
-  size(1360, 900, P3D);
-  smooth(4);
   frameRate(120);
   surface.setTitle("BACKROOMS: Escape from the Nerdolas");
   win = (GLWindow) surface.getNative();
+  win.addKeyListener(new com.jogamp.newt.event.KeyListener() {
+    public void keyPressed(com.jogamp.newt.event.KeyEvent event) {
+      if (!ENABLE_VISUAL_DEBUG) return;
+      short code = event.getKeyCode();
+      if (code == com.jogamp.newt.event.KeyEvent.VK_F9
+          || code == com.jogamp.newt.event.KeyEvent.VK_F10) {
+        if (!visualDebugKeyHeld) {
+          visualDebugKeyHeld = true;
+          toggleVisualDebug();
+        }
+      }
+    }
+    public void keyReleased(com.jogamp.newt.event.KeyEvent event) {
+      short code = event.getKeyCode();
+      if (code == com.jogamp.newt.event.KeyEvent.VK_F9
+          || code == com.jogamp.newt.event.KeyEvent.VK_F10) {
+        visualDebugKeyHeld = false;
+      }
+    }
+  });
+  surface.setResizable(true);
+  updateDisplaySize();
 
   carpet  = loadImage("carpet.jpg");
-  wall    = loadImage("wall.jpg");
+  wall    = loadImage("wall.png");
   roof    = loadImage("roof.jpg");
   menuImg = loadImage("menu.png");
 
@@ -1204,8 +1402,8 @@ void setup() {
   fontHud      = createFont("Impact", 48, true);
   fontMail     = createFont("SansSerif", 22, true);
 
-  textureMode(NORMAL);
-  textureWrap(REPEAT);
+  viewGraphics().textureMode(NORMAL);
+  viewGraphics().textureWrap(REPEAT);
 
   world = new PShader(this, WORLD_VERT, WORLD_FRAG);
   post  = new PShader(this, POST_VERT, POST_FRAG);
@@ -1213,6 +1411,7 @@ void setup() {
   tape  = new PShader(this, POST_VERT, TAPE_FRAG);
 
   panelTex  = makePanel();
+  panelFrameTex = makePanelFrame();
   outletTex = makeOutlet();
   ventTex   = makeVent();
   staticImg = createImage(240, 150, RGB);
@@ -1266,9 +1465,16 @@ void updateCameraLight(float dt) {
 }
 
 void updateFlashlight(float dt, float ex, float ey, float ez, float lx, float ly, float lz) {
-  // No interpolation or extra sway: position and direction are exactly the camera's.
-  flashPos.set(ex, ey, ez);
-  flashDir.set(lx, ly, lz).normalize();
+  flashPos.set(ex,ey,ez); // always mounted at the camera
+  flashDir.set(lx,ly,lz).normalize();
+  float amplitude=FLASH_RUN_WOBBLE*min(runAir,1);
+  if (amplitude>0) {
+    PVector right=new PVector(-sin(yaw),cos(yaw),0);
+    PVector up=flashDir.cross(right).normalize();
+    float side=amplitude*(0.8*sin(bobPhase*0.5)+0.2*sin(bobPhase*1.5));
+    float lift=amplitude*0.65*sin(bobPhase+0.8);
+    flashDir.add(PVector.mult(right,side)); flashDir.add(PVector.mult(up,lift)); flashDir.normalize();
+  }
 }
 
 float flashlightStrength() { return flashlightOn ? flicker : 0; }
@@ -1300,10 +1506,13 @@ void flashClick() {
 }
 
 void draw() {
+  updateVideoPreferences();
+  updateDisplaySize();
   int now = millis();
   float dt = min((now - lastMs) / 1000.0, 0.05);
   lastMs = now;
   frameDt = dt;
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen){drawVisualDebug();tickUiAudio(dt);return;}
 
   if (state == PLAYING && !paused && !focused) pauseGame();   // alt-tab pauses
   if (state == PLAYING && paused) {
@@ -1345,6 +1554,7 @@ void buildSynthGraph() {
 
   stepAmp = new Multiplier(0);
   new Noise(1, Noise.Tint.BROWN).patch(new MoogFilter(280, 0.25)).patch(stepAmp).patch(fxMix);
+  buildRunWhoosh();
   breathAmp = new Multiplier(0);
   new Noise(1, Noise.Tint.PINK).patch(new MoogFilter(1400, 0.15)).patch(breathAmp).patch(fxMix);
   staticAmp = new Multiplier(0);
@@ -1400,6 +1610,7 @@ void buildSynthGraph() {
 }
 
 void updateSynth(float dt, float dg) {
+  updateRunWhoosh();
   stepEnv *= exp(-dt * 16);
   stepAmp.setValue(stepEnv);
 
@@ -1413,7 +1624,7 @@ void updateSynth(float dt, float dg) {
 
   float need = exhausted ? 1 : sq(1 - stamina / staminaMax()) * 0.6;
   breathPhase += dt * (exhausted ? 1.6 : 1.1);
-  breathAmp.setValue(need * 0.1 * sq(max(0, sin(breathPhase * TWO_PI))) * (crouching ? 0.5 : 1));
+  breathAmp.setValue(0);
 
   staticBurst *= exp(-dt * 6);
   staticAmp.setValue(0.04 * pow(dg, 3) + staticBurst);
@@ -1488,6 +1699,7 @@ void triggerSting(Enemy e) {
 }
 
 void silenceSynth() {
+  silenceRunWhoosh();
   hum.setAmplitude(0);
   hum2.setAmplitude(0);
   heart.setAmplitude(0);
@@ -1782,6 +1994,7 @@ void startRun(int mode, int entry) {
   fov = radians(BASE_FOV);
   exposureAdapt = 1;
   cameraExposureTarget = 1; meterNext = 0;
+  resetCamera();
   roll = bobPhase = stepEnv = hbPhase = staticBurst = chewTimer = 0;
   peekSide = peekDir = 0;
   paused = false;
@@ -1792,6 +2005,7 @@ void startRun(int mode, int entry) {
   flicker = 1;
   flickerUntil = 0;
   moving = sprinting = crouching = false;
+  silenceRunWhoosh();
   updateCameraLight(0);
   crouchToggle = false;
   releaseKeys();
@@ -1948,8 +2162,17 @@ PShape buildLevel() {
   beginLevelChunks(floorS, ceilS, wallS);
   for (int i = 1; i < GRID - 1; i++) for (int j = 1; j < GRID - 1; j++) {
     float x = i * CELL, y = j * CELL;
-    addQuad(floorS, new PVector(x, y, 0), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
+
     addQuad(ceilS, new PVector(x, y, WALL_H), new PVector(CELL, 0, 0), new PVector(0, CELL, 0), 1, 1);
+  }
+  for(int i=1;i<GRID-1;) {
+    int ni=min(GRID-1,(i/LEVEL_CHUNK_CELLS+1)*LEVEL_CHUNK_CELLS);
+    for(int j=1;j<GRID-1;) {
+      int nj=min(GRID-1,(j/LEVEL_CHUNK_CELLS+1)*LEVEL_CHUNK_CELLS);
+      addQuad(floorS,new PVector(i*CELL,j*CELL,0),new PVector((ni-i)*CELL,0,0),new PVector(0,(nj-j)*CELL,0),ni-i,nj-j);
+      j=nj;
+    }
+    i=ni;
   }
   appendWallMesh(wallS);
   floorS.endShape(); ceilS.endShape(); wallS.endShape();
@@ -1964,6 +2187,7 @@ PShape startMesh(PImage tex) {
   s.beginShape(QUADS);
   s.noStroke();
   s.fill(255);
+  s.textureMode(NORMAL);
   s.texture(tex);
   return s;
 }
@@ -1983,16 +2207,12 @@ void corner(PShape s, PVector o, PVector a, PVector b, float u, float v, float u
 // =====================================================================
 // SURFACE DETAIL TEXTURES
 PImage makePanel() {
-  PGraphics g = createGraphics(128, 128);
-  g.beginDraw();
-  g.background(70);               // frame edge, was 110
-  g.noStroke(); g.fill(160); g.rect(2, 2, 124, 124);   // was 210
-  g.fill(255); g.rect(4, 4, 120, 120);
-  g.stroke(232); g.strokeWeight(1);
-  for (int x = 9; x < 124; x += 5) g.line(x, 4, x, 124);
-  for (int y = 9; y < 124; y += 5) g.line(4, y, 124, y);
-  g.endDraw();
-  return g.get();
+  PGraphics pg = createGraphics(128,128);
+  pg.beginDraw(); pg.background(248,246,237);
+  pg.stroke(239,237,229); pg.strokeWeight(1);
+  for (int x=4;x<128;x+=5) pg.line(x,0,x,128);
+  for (int y=4;y<128;y+=5) pg.line(0,y,128,y);
+  pg.endDraw(); return pg.get();
 }
 
 PImage makeOutlet() {
@@ -2187,22 +2407,22 @@ void placeProps() {
 
 void drawDecals() {
   world.set("emissive", 0.0);
-  textureWrap(CLAMP);
-  noStroke();
-  noTint();
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().noStroke();
+  viewGraphics().noTint();
   for (Decal dc : decals) {
     if (dist(player.x, player.y, dc.cx, dc.cy) > CELL * 8) continue;
     float rx = dc.ny, ry = -dc.nx;
     float hw = dc.w / 2, hh = dc.h / 2;
-    beginShape(QUADS);
-    texture(dc.tex);
-    vertex(dc.cx - rx * hw, dc.cy - ry * hw, dc.z + hh, 0, 0);
-    vertex(dc.cx + rx * hw, dc.cy + ry * hw, dc.z + hh, 1, 0);
-    vertex(dc.cx + rx * hw, dc.cy + ry * hw, dc.z - hh, 1, 1);
-    vertex(dc.cx - rx * hw, dc.cy - ry * hw, dc.z - hh, 0, 1);
-    endShape();
+    viewGraphics().beginShape(QUADS);
+    viewGraphics().texture(dc.tex);
+    viewGraphics().vertex(dc.cx - rx * hw, dc.cy - ry * hw, dc.z + hh, 0, 0);
+    viewGraphics().vertex(dc.cx + rx * hw, dc.cy + ry * hw, dc.z + hh, 1, 0);
+    viewGraphics().vertex(dc.cx + rx * hw, dc.cy + ry * hw, dc.z - hh, 1, 1);
+    viewGraphics().vertex(dc.cx - rx * hw, dc.cy - ry * hw, dc.z - hh, 0, 1);
+    viewGraphics().endShape();
   }
-  flush();
+  viewGraphics().flush();
 }
 
 // =====================================================================
@@ -2386,29 +2606,29 @@ void addArrowsTo(int ti, int tj, int count) {
 void drawArrows() {
   if (arrows.isEmpty()) return;
   world.set("emissive", 0.0);
-  textureWrap(CLAMP);
-  noStroke();
-  noTint();
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().noStroke();
+  viewGraphics().noTint();
   for (Arrow ar : arrows) {
     if (dist(player.x, player.y, ar.cx, ar.cy) > CELL * 8) continue;
     float hw = 95 * ar.size, hh = 47 * ar.size;
     float ca = cos(ar.tilt), sa = sin(ar.tilt);
     float u0 = ar.flip ? 1 : 0, u1 = ar.flip ? 0 : 1;
-    beginShape(QUADS);
-    texture(arrowTex);
+    viewGraphics().beginShape(QUADS);
+    viewGraphics().texture(arrowTex);
     arrowVertex(ar, -hw,  hh, ca, sa, u0, 0);
     arrowVertex(ar,  hw,  hh, ca, sa, u1, 0);
     arrowVertex(ar,  hw, -hh, ca, sa, u1, 1);
     arrowVertex(ar, -hw, -hh, ca, sa, u0, 1);
-    endShape();
+    viewGraphics().endShape();
   }
-  flush();
+  viewGraphics().flush();
 }
 
 void arrowVertex(Arrow ar, float px, float pz, float ca, float sa, float u, float v) {
   float qx = px * ca - pz * sa, qz = px * sa + pz * ca;
   float rx = ar.ny, ry = -ar.nx;
-  vertex(ar.cx + rx * qx, ar.cy + ry * qx, ar.z + qz, u, v);
+  viewGraphics().vertex(ar.cx + rx * qx, ar.cy + ry * qx, ar.z + qz, u, v);
 }
 
 PImage makeArrow() {
@@ -2466,22 +2686,22 @@ void sprayStroke(PGraphics g, float x0, float y0, float x1, float y1, float w, j
 void drawCerts() {
   if (certs.isEmpty()) return;
   world.set("emissive", 0.3 + 0.12 * sin(millis() * 0.004));
-  textureWrap(CLAMP);
-  noStroke();
-  noTint();
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().noStroke();
+  viewGraphics().noTint();
   float hw = 48, hh = 48;
   for (Cert ct : certs) {
     if (dist(player.x, player.y, ct.x, ct.y) > CELL * 8) continue;
     float rx = -ct.dj, ry = ct.di;
-    beginShape(QUADS);
-    texture(certTex);
-    vertex(ct.x - rx * hw, ct.y - ry * hw, ct.z + hh, 0, 0);
-    vertex(ct.x + rx * hw, ct.y + ry * hw, ct.z + hh, 1, 0);
-    vertex(ct.x + rx * hw, ct.y + ry * hw, ct.z - hh, 1, 1);
-    vertex(ct.x - rx * hw, ct.y - ry * hw, ct.z - hh, 0, 1);
-    endShape();
+    viewGraphics().beginShape(QUADS);
+    viewGraphics().texture(certTex);
+    viewGraphics().vertex(ct.x - rx * hw, ct.y - ry * hw, ct.z + hh, 0, 0);
+    viewGraphics().vertex(ct.x + rx * hw, ct.y + ry * hw, ct.z + hh, 1, 0);
+    viewGraphics().vertex(ct.x + rx * hw, ct.y + ry * hw, ct.z - hh, 1, 1);
+    viewGraphics().vertex(ct.x - rx * hw, ct.y - ry * hw, ct.z - hh, 0, 1);
+    viewGraphics().endShape();
   }
-  flush();
+  viewGraphics().flush();
 }
 
 void chooseExit() {
@@ -2517,22 +2737,22 @@ float exitY() { return (exitJ + 0.5) * CELL + exitDJ * CELL * 0.25; }
 void drawExit() {
   if (!exitOpen) return;
   world.set("emissive", 1.4 + 0.3 * sin(millis() * 0.005));
-  textureWrap(CLAMP);
-  noStroke();
-  noTint();
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().noStroke();
+  viewGraphics().noTint();
   float nx = -exitDI, ny = -exitDJ;
   float rx = ny, ry = -nx;
   float cx = (exitI + 0.5) * CELL + exitDI * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
   float cy = (exitJ + 0.5) * CELL + exitDJ * (CELL * 0.5 - WALL_THICKNESS / 2 - 3);
   float hw = 110;
-  beginShape(QUADS);
-  texture(exitTex);
-  vertex(cx - rx * hw, cy - ry * hw, WALL_H - 8, 0, 0);
-  vertex(cx + rx * hw, cy + ry * hw, WALL_H - 8, 1, 0);
-  vertex(cx + rx * hw, cy + ry * hw, 0, 1, 1);
-  vertex(cx - rx * hw, cy - ry * hw, 0, 0, 1);
-  endShape();
-  flush();
+  viewGraphics().beginShape(QUADS);
+  viewGraphics().texture(exitTex);
+  viewGraphics().vertex(cx - rx * hw, cy - ry * hw, WALL_H - 8, 0, 0);
+  viewGraphics().vertex(cx + rx * hw, cy + ry * hw, WALL_H - 8, 1, 0);
+  viewGraphics().vertex(cx + rx * hw, cy + ry * hw, 0, 1, 1);
+  viewGraphics().vertex(cx - rx * hw, cy - ry * hw, 0, 0, 1);
+  viewGraphics().endShape();
+  viewGraphics().flush();
 }
 
 // =====================================================================
@@ -2936,12 +3156,12 @@ PShape loadItem(String file) {
 void drawItem(PShape grp) {
   if (grp == null) return;
   for (int pass = 0; pass < 2; pass++) {
-    if (pass == 1) hint(DISABLE_DEPTH_MASK);
+    if (pass == 1) viewGraphics().hint(DISABLE_DEPTH_MASK);
     for (PShape ch : grp.getChildren()) {
       boolean glass = "glass".equals(ch.getName());
-      if (glass == (pass == 1)) shape(ch);
+      if (glass == (pass == 1)) viewGraphics().shape(ch);
     }
-    if (pass == 1) { flush(); hint(ENABLE_DEPTH_MASK); }
+    if (pass == 1) { viewGraphics().flush(); viewGraphics().hint(ENABLE_DEPTH_MASK); }
   }
 }
 void lathe(float[] r, float[] h, int n, int segs, int cBot, int cTop, float grain) {
@@ -2955,7 +3175,7 @@ void lathe(float[] r, float[] h, int n, int segs, int cBot, int cTop, float grai
     nr[k] = dh / len;
     nh[k] = -dr / len;
   }
-  beginShape(QUADS);
+  viewGraphics().beginShape(QUADS);
   for (int k = 0; k < n - 1; k++) {
     int ca = lerpColor(cBot, cTop, constrain((h[k] - hMin) / span, 0, 1));
     int cb = lerpColor(cBot, cTop, constrain((h[k + 1] - hMin) / span, 0, 1));
@@ -2967,7 +3187,7 @@ void lathe(float[] r, float[] h, int n, int segs, int cBot, int cTop, float grai
       lv(r[k + 1], h[k + 1], a0, nr[k + 1], nh[k + 1], cb, grain);
     }
   }
-  endShape();
+  viewGraphics().endShape();
 }
 
 void lv(float r, float h, float a, float nr, float nh, int c, float grain) {
@@ -2976,22 +3196,22 @@ void lv(float r, float h, float a, float nr, float nh, int c, float grain) {
     int dark = color(red(c) * 0.35, green(c) * 0.3, blue(c) * 0.25, alpha(c));
     c = lerpColor(c, dark, grain * noise(x * 0.15 + 50, h * 0.15, z * 0.15));
   }
-  fill(c);
-  normal(nr * cos(a), -nh, nr * sin(a));
-  vertex(x, -h, z);
+  viewGraphics().fill(c);
+  viewGraphics().normal(nr * cos(a), -nh, nr * sin(a));
+  viewGraphics().vertex(x, -h, z);
 }
 
 void disc(float r, float h, int segs, int c) {
-  beginShape(TRIANGLES);
+  viewGraphics().beginShape(TRIANGLES);
   for (int s = 0; s < segs; s++) {
     float a0 = TWO_PI * s / segs, a1 = TWO_PI * (s + 1) / segs;
-    fill(c);
-    normal(0, -1, 0);
-    vertex(0, -h, 0);
-    vertex(r * cos(a0), -h, r * sin(a0));
-    vertex(r * cos(a1), -h, r * sin(a1));
+    viewGraphics().fill(c);
+    viewGraphics().normal(0, -1, 0);
+    viewGraphics().vertex(0, -h, 0);
+    viewGraphics().vertex(r * cos(a0), -h, r * sin(a0));
+    viewGraphics().vertex(r * cos(a1), -h, r * sin(a1));
   }
-  endShape();
+  viewGraphics().endShape();
 }
 
 // each bite swaps to the next model, right after the chomp lands
@@ -3009,22 +3229,22 @@ float modelSalada(float c) {
 // the tears glow inside the bottle and drain as you drink
 float modelLagrimas(float c) {
   float lvl = 6 + 92 * (1 - c);
-  emissive(10, 35, 95);
+  viewGraphics().emissive(10, 35, 95);
   lathe(new float[]{0, 15.2, 15.2, 0}, new float[]{4, 4, lvl, lvl}, 4, 20, color(35, 95, 215), color(70, 145, 255), 0);
-  emissive(0);
-  specular(60);
-  shininess(10);
-  beginShape(QUAD_STRIP);                       // the label: a band around the bottle's waist
-  texture(lagrimasLabel);
-  fill(255);
+  viewGraphics().emissive(0);
+  viewGraphics().specular(60);
+  viewGraphics().shininess(10);
+  viewGraphics().beginShape(QUAD_STRIP);                       // the label: a band around the bottle's waist
+  viewGraphics().texture(lagrimasLabel);
+  viewGraphics().fill(255);
   for (int k = 0; k <= 40; k++) {
     float a = TWO_PI * k / 40;
-    normal(cos(a), 0, sin(a));
-    vertex(17.1 * cos(a), -84, 17.1 * sin(a), 1 - k / 40.0, 0);
-    vertex(17.1 * cos(a), -52, 17.1 * sin(a), 1 - k / 40.0, 1);
+    viewGraphics().normal(cos(a), 0, sin(a));
+    viewGraphics().vertex(17.1 * cos(a), -84, 17.1 * sin(a), 1 - k / 40.0, 0);
+    viewGraphics().vertex(17.1 * cos(a), -52, 17.1 * sin(a), 1 - k / 40.0, 1);
   }
-  endShape();
-  specular(0);
+  viewGraphics().endShape();
+  viewGraphics().specular(0);
   drawItem(lagrimasModel);
   return 128;
 }
@@ -3081,20 +3301,20 @@ float modelCesta(float c) {
 void modelTaser(boolean firing) {
   drawItem(taserModel);
   if (firing) {
-    emissive(80, 160, 255);
-    fill(170, 215, 255);
-    pushMatrix(); translate(0, 2, -68); sphere(7); popMatrix();
+    viewGraphics().emissive(80, 160, 255);
+    viewGraphics().fill(170, 215, 255);
+    viewGraphics().pushMatrix(); viewGraphics().translate(0, 2, -68); viewGraphics().sphere(7); viewGraphics().popMatrix();
     for (int k = 0; k < 3; k++) {
-      pushMatrix();
-      translate(random(-8, 8), 2 + random(-4, 4), -68 + random(-3, 3));
-      box(2);
-      popMatrix();
+      viewGraphics().pushMatrix();
+      viewGraphics().translate(random(-8, 8), 2 + random(-4, 4), -68 + random(-3, 3));
+      viewGraphics().box(2);
+      viewGraphics().popMatrix();
     }
-    emissive(0);
+    viewGraphics().emissive(0);
   }
-  specular(0);
-  tipSX = screenX(0, 2, -68);
-  tipSY = screenY(0, 2, -68);
+  viewGraphics().specular(0);
+  tipSX = viewGraphics().screenX(0, 2, -68);
+  tipSY = viewGraphics().screenY(0, 2, -68);
 }
 float drawModel(int type, float c, boolean firing) {
   if (type == COXINHA) return modelCoxinha(c);
@@ -3108,8 +3328,8 @@ float drawModel(int type, float c, boolean firing) {
 }
 
 void drawDrops3D() {
-  sphereDetail(8);
-  noStroke();
+  viewGraphics().sphereDetail(8);
+  viewGraphics().noStroke();
   float t = millis() / 1000.0;
   float maxD = CELL * 5.5;
   for (Drop dr : drops) {
@@ -3124,34 +3344,34 @@ void drawDrops3D() {
     float sc = (dr.type == CESTA ? 0.55 : 0.6) * appear;
 
     if (dd < CELL * 4) {
-      noLights();
+      viewGraphics().noLights();
       float sa = 55 * sq(vis) * (1 - dd / (CELL * 4)) * (1 - 0.35 * up01) * appear;
       float sr = (dr.type == CESTA ? 70 : 55) * (1 - 0.15 * up01);
-      pushMatrix();
-      translate(dr.x, dr.y, 2.5);
+      viewGraphics().pushMatrix();
+      viewGraphics().translate(dr.x, dr.y, 2.5);
       for (int k = 0; k < 3; k++) {
-        fill(0, sa / 3);
-        ellipse(0, 0, sr * (1 - k * 0.25), sr * (1 - k * 0.25));
+        viewGraphics().fill(0, sa / 3);
+        viewGraphics().ellipse(0, 0, sr * (1 - k * 0.25), sr * (1 - k * 0.25));
       }
-      popMatrix();
+      viewGraphics().popMatrix();
     }
 
     itemLights(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0), lerp(1, vis, 0.5));
 
-    pushMatrix();
-    translate(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0));
-    rotateZ(t * 1.3 + ph);
-    rotateX(-HALF_PI);
-    rotateZ(sin(t * 1.7 + ph) * 0.12);
-    scale(sc);
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(dr.x, dr.y, hover + (dr.type == TASER ? 60 * sc : 0));
+    viewGraphics().rotateZ(t * 1.3 + ph);
+    viewGraphics().rotateX(-HALF_PI);
+    viewGraphics().rotateZ(sin(t * 1.7 + ph) * 0.12);
+    viewGraphics().scale(sc);
     drawModel(dr.type, 0, false);
-    popMatrix();
-    flush();
+    viewGraphics().popMatrix();
+    viewGraphics().flush();
   }
-  noLights();
-  lightFalloff(1, 0, 0);
-  specular(0);
-  emissive(0);
+  viewGraphics().noLights();
+  viewGraphics().lightFalloff(1, 0, 0);
+  viewGraphics().specular(0);
+  viewGraphics().emissive(0);
 }
 
 // the room's lamp + your flashlight on a small object at (x, y); L dims it with the fog
@@ -3167,23 +3387,23 @@ void itemLights(float x, float y, float z, float L) {
     bounce = giField[gy * giSize + gx] * live;
   }
   float amb = constrain(0.5 * lp + 2 * bounce, 0, 1.5) * L;
-  noLights();
-  lightFalloff(1, 0, 0);
-  ambientLight(70 * amb, 62 * amb, 48 * amb);
-  lightFalloff(1, 0, 0.000004);
-  pointLight(255 * lp * L, 235 * lp * L, 185 * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 3);
-  lightFalloff(1, 0, 0);
+  viewGraphics().noLights();
+  viewGraphics().lightFalloff(1, 0, 0);
+  viewGraphics().ambientLight(70 * amb, 62 * amb, 48 * amb);
+  viewGraphics().lightFalloff(1, 0, 0.000004);
+  viewGraphics().pointLight(255 * lp * L, 235 * lp * L, 185 * lp * L, (ci + 0.5) * CELL, (cj + 0.5) * CELL, WALL_H - 3);
+  viewGraphics().lightFalloff(1, 0, 0);
   float fl = flashlightStrength();
   float d = dist(x, y, z, flashPos.x, flashPos.y, flashPos.z);
   if (fl > 0 && d < FLASH_RANGE && lineOfSight(flashPos.x, flashPos.y, x, y)) {
     // Fixed-pipeline OBJ lighting uses the same camera source, broad spread and short reach.
     float t = constrain((d - FLASH_RANGE * 0.5) / (FLASH_RANGE * 0.5), 0, 1);
     float fade = 1 - t * t * (3 - 2 * t);
-    lightFalloff(1, 0, 1.0 / sq(FLASH_FALLOFF));
+    viewGraphics().lightFalloff(1, 0, 1.0 / sq(FLASH_FALLOFF));
     float f = 210 * FLASH_POWER * fl * L * fade;
-    spotLight(f * FLASH_COLOR.x, f * FLASH_COLOR.y, f * FLASH_COLOR.z,
+    viewGraphics().spotLight(f * FLASH_COLOR.x, f * FLASH_COLOR.y, f * FLASH_COLOR.z,
       flashPos.x, flashPos.y, flashPos.z, flashDir.x, flashDir.y, flashDir.z, acos(FLASH_OUTER_COS), 1);
-    lightFalloff(1, 0, 0);
+    viewGraphics().lightFalloff(1, 0, 0);
   }
 }
 
@@ -3192,20 +3412,20 @@ void drawViewModel3D() {
   boolean firing = now < fireUntil;
   if (useType < 0 && inv[TASER] <= 0 && !firing) return;
 
-  PGL pgl = beginPGL();
+  PGL pgl = viewGraphics().beginPGL();
   pgl.clear(PGL.DEPTH_BUFFER_BIT);
-  endPGL();
-  perspective(radians(55), float(width) / height, 1, 3000);
-  camera(0, 0, 0, 0, 0, -1, 0, 1, 0);
+  viewGraphics().endPGL();
+  viewGraphics().perspective(radians(55), float(viewWidth()) / viewHeight(), 1, 3000);
+  viewGraphics().camera(0, 0, 0, 0, 0, -1, 0, 1, 0);
 
   float lvl = constrain(localLight + 0.35 * flashlightStrength(), 0.12, 1.3);
-  ambientLight(60 * lvl, 54 * lvl, 42 * lvl);
-  lightSpecular(140 * lvl, 130 * lvl, 110 * lvl);
-  directionalLight(255 * lvl, 236 * lvl, 190 * lvl, -0.25, 0.75, -0.6);
-  lightSpecular(0, 0, 0);
-  directionalLight(40, 45, 60, 0.6, -0.3, -0.4);
-  noStroke();
-  sphereDetail(10);
+  viewGraphics().ambientLight(60 * lvl, 54 * lvl, 42 * lvl);
+  viewGraphics().lightSpecular(140 * lvl, 130 * lvl, 110 * lvl);
+  viewGraphics().directionalLight(255 * lvl, 236 * lvl, 190 * lvl, -0.25, 0.75, -0.6);
+  viewGraphics().lightSpecular(0, 0, 0);
+  viewGraphics().directionalLight(40, 45, 60, 0.6, -0.3, -0.4);
+  viewGraphics().noStroke();
+  viewGraphics().sphereDetail(10);
 
   float bobX = cos(bobPhase) * 4, bobY = abs(sin(bobPhase)) * 4;
   if (useType >= 0) {
@@ -3215,38 +3435,38 @@ void drawViewModel3D() {
     float c = constrain((t - 0.2) / 0.65, 0, 1);
     boolean eatingNow = c > 0 && c < 1;
     float topH;
-    pushMatrix();
+    viewGraphics().pushMatrix();
     if (useType == LAGRIMAS || useType == MONSTER) {
       float tilt = up * (0.25 + 1.25 * min(1, c * 2));
-      translate(30 + bobX, lerp(240, 40, up) + bobY - 25 * tilt, -210 + 40 * tilt);
-      rotateZ(-0.25 * up);
-      rotateX(-tilt);
-      if (useType == MONSTER) rotateY(PI - 0.3);   // the logo toward you
+      viewGraphics().translate(30 + bobX, lerp(240, 40, up) + bobY - 25 * tilt, -210 + 40 * tilt);
+      viewGraphics().rotateZ(-0.25 * up);
+      viewGraphics().rotateX(-tilt);
+      if (useType == MONSTER) viewGraphics().rotateY(PI - 0.3);   // the logo toward you
       topH = useType == MONSTER ? modelCan() : modelLagrimas(c);
     } else {
       float chomp = eatingNow ? pow(abs(sin(c * PI * 6)), 3) : 0;
-      translate(bobX, lerp(250, useType == CESTA ? 75 : 60, up) + bobY - chomp * 10, -250 + 70 * chomp);
-      rotateX(useType == CESTA ? -0.55 : -0.3);
-      rotateY(now * 0.0006 + c * 1.5);
+      viewGraphics().translate(bobX, lerp(250, useType == CESTA ? 75 : 60, up) + bobY - chomp * 10, -250 + 70 * chomp);
+      viewGraphics().rotateX(useType == CESTA ? -0.55 : -0.3);
+      viewGraphics().rotateY(now * 0.0006 + c * 1.5);
       topH = drawModel(useType, c, false);
     }
-    biteSX = screenX(0, -topH, 0);
-    biteSY = screenY(0, -topH, 0);
-    popMatrix();
+    biteSX = viewGraphics().screenX(0, -topH, 0);
+    biteSY = viewGraphics().screenY(0, -topH, 0);
+    viewGraphics().popMatrix();
   } else {
     float k = firing ? 1 - (fireUntil - now) / 350.0 : 0;
     float recoil = firing ? sin(k * PI) : 0;
-    pushMatrix();
-    translate(120 + bobX, 55 + bobY - recoil * 8, -230 + recoil * 25);
-    rotateY(0.3);
-    rotateX(recoil * 0.35);
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(120 + bobX, 55 + bobY - recoil * 8, -230 + recoil * 25);
+    viewGraphics().rotateY(0.3);
+    viewGraphics().rotateX(recoil * 0.35);
     modelTaser(firing);
-    popMatrix();
+    viewGraphics().popMatrix();
   }
-  flush();
-  noLights();
-  specular(0);
-  emissive(0);
+  viewGraphics().flush();
+  viewGraphics().noLights();
+  viewGraphics().specular(0);
+  viewGraphics().emissive(0);
 }
 
 // =====================================================================
@@ -3329,28 +3549,23 @@ void applyBuff(int type) {
   case COXINHA:
     energyUntil = now + BUFF_MS[COXINHA];
     exhausted = false;
-    showMsg("ENERGIA  —  CORRIDA INFINITA");
     if (usedCount[COXINHA] >= 3) unlock(3);
     break;
   case SALADA:
     swiftUntil = now + BUFF_MS[SALADA];
-    showMsg("LEVEZA  —  VOCÊ ESTÁ MAIS RÁPIDO");
     break;
   case LAGRIMAS:
     ghostUntil = now + BUFF_MS[LAGRIMAS];
-    showMsg(vanish() ? "INVISÍVEL  —  ELES TE PERDERAM" : "INVISÍVEL  —  ELES NÃO TE VEEM");
     break;
   case CESTA:
     fedUntil = now + BUFF_MS[CESTA];
     stamina = STAMINA_MAX * 2 * pizzaMul();
     exhausted = false;
-    showMsg("ABASTECIDO  —  FÔLEGO EM DOBRO");
     break;
   case MONSTER:
     pilhadoUntil = now + BUFF_MS[MONSTER];
     if (inv[LATA] < MAX_STACK) inv[LATA]++;
     itemSeen[LATA] = true;
-    showMsg("PILHADO  —  VOCÊ OS VÊ ATRAVÉS DAS PAREDES   ·   LATA VAZIA [G]");
     break;
   }
   if (usedType[0] && usedType[1] && usedType[2] && usedType[3] && survived <= 120) unlock(4);
@@ -3377,7 +3592,6 @@ void fireTaser() {
   staticBurst = 0.45;
   stepEnv = 0.4;
   if (taserHit) stunEnemy(target, targetD);
-  else showMsg("ERROU  —  O TASER DESCARREGOU");
 }
 
 void stunEnemy(Enemy e, float d) {
@@ -3394,7 +3608,7 @@ void stunEnemy(Enemy e, float d) {
   e.sees = false;
   e.lostTimer = e.searchTimer = e.senseTimer = e.chaseTime = 0;
   pickWanderFar(e);
-  showMsg("ATORDOADO  —  " + NAMES[e.ch].toUpperCase() + " TE PERDEU");
+  showMsg(NAMES[e.ch].toUpperCase() + " TE PERDEU");
 }
 
 // =====================================================================
@@ -3468,6 +3682,7 @@ void update(float dt) {
     pvx = lerp(pvx, (player.x - px0) / dt, 0.15);
     pvy = lerp(pvy, (player.y - py0) / dt, 0.15);
   }
+  updateRunAir(dt, dt>0 ? dist(px0,py0,player.x,player.y)/dt : 0);
 
   int vci = cellOf(player.x), vcj = cellOf(player.y);
   if (!visited[vci][vcj]) {
@@ -3584,9 +3799,7 @@ void update(float dt) {
 
   updateLampGrid();
 
-  float adaptationSpeed = cameraExposureTarget < exposureAdapt ? 2.4 : 0.8;
-  exposureAdapt = lerp(exposureAdapt, cameraExposureTarget, 1 - exp(-dt * adaptationSpeed));
-  camGain = constrain(map(exposureAdapt, 0.8, 1.6, 0, 1), 0, 1);
+  updateAutoExposure(dt);
 
   update3DAudio(dt);
   updateSynth(dt, dg);
@@ -3681,7 +3894,7 @@ int[] roughArea(int maxRooms) {
 // NEXTBOT AI (per nerdola, with traits)
 float enemyBaseSpeed() {
   float t = max(0, survived - graceTime);
-  if (gameMode == FUGA) return min(ENEMY_MAX + 40, ENEMY_START + certsTaken * CERT_SPEEDUP + t * ENEMY_RAMP * 0.75);
+  if (gameMode == FUGA) return min(ENEMY_MAX + 40, ENEMY_START + certsTaken * CERT_SPEEDUP + t * ENEMY_RAMP * 0.4);
   return min(ENEMY_MAX, ENEMY_START + t * ENEMY_RAMP);
 }
 
@@ -3883,35 +4096,35 @@ void drawXray() {
   float fade = constrain((pilhadoUntil - now) / 1500.0, 0, 1)
     * constrain((now - (pilhadoUntil - BUFF_MS[MONSTER])) / 400.0, 0, 1);
   float pulse = 0.85 + 0.15 * sin(now * 0.008);
-  noLights();
-  noStroke();
-  textureWrap(CLAMP);
-  flush();
-  PGL pgl = beginPGL();
+  viewGraphics().noLights();
+  viewGraphics().noStroke();
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().flush();
+  PGL pgl = viewGraphics().beginPGL();
   pgl.depthFunc(PGL.GREATER);
   pgl.depthMask(false);
   for (Enemy e : enemies) {
     float d = dist(player.x, player.y, e.pos.x, e.pos.y);
     float far = map(constrain(d, CELL * 8, CELL * 20), CELL * 8, CELL * 20, 1, 0.35);
-    tint(150, 205, 255, 255 * XRAY_ALPHA * fade * pulse * far);
+    viewGraphics().tint(150, 205, 255, 255 * XRAY_ALPHA * fade * pulse * far);
     float sz = 220, base = 25;
-    pushMatrix();
-    translate(e.pos.x, e.pos.y, 0);
-    rotateZ(atan2(player.y - e.pos.y, player.x - e.pos.x));
-    beginShape(QUADS);
-    texture(faces[e.ch]);
-    vertex(0,  sz / 2, base + sz, 0, 0);
-    vertex(0, -sz / 2, base + sz, 1, 0);
-    vertex(0, -sz / 2, base, 1, 1);
-    vertex(0,  sz / 2, base, 0, 1);
-    endShape();
-    popMatrix();
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(e.pos.x, e.pos.y, 0);
+    viewGraphics().rotateZ(atan2(player.y - e.pos.y, player.x - e.pos.x));
+    viewGraphics().beginShape(QUADS);
+    viewGraphics().texture(faces[e.ch]);
+    viewGraphics().vertex(0,  sz / 2, base + sz, 0, 0);
+    viewGraphics().vertex(0, -sz / 2, base + sz, 1, 0);
+    viewGraphics().vertex(0, -sz / 2, base, 1, 1);
+    viewGraphics().vertex(0,  sz / 2, base, 0, 1);
+    viewGraphics().endShape();
+    viewGraphics().popMatrix();
   }
-  flush();
+  viewGraphics().flush();
   pgl.depthFunc(PGL.LEQUAL);
   pgl.depthMask(true);
-  endPGL();
-  noTint();
+  viewGraphics().endPGL();
+  viewGraphics().noTint();
 }
 
 // =====================================================================
@@ -4114,7 +4327,7 @@ void openSecret(Secret s) {
   staticBurst = max(staticBurst, 0.5);
   achT = 0;                                     // the little chime
   if (s.pizza) {
-    showMsg("A BÊNÇÃO DO CABRAL  —  UMA PASSAGEM SE ABRIU");
+    showMsg("CABRAL ABENÇOA SUA VIAGEM");
   } else {
     showMsg("UMA PASSAGEM SECRETA...");
     drops.add(new Drop((s.wi + 0.5) * CELL, (s.wj + 0.5) * CELL, nextDropType()));
@@ -4129,32 +4342,32 @@ void eatPizza(Secret s) {
   exhausted = false;
   achT = 0;
   stepEnv = 0.3;
-  showMsg("PIZZA DO PAPPONI  —  FÔLEGO MÁXIMO +" + round(PIZZA_BONUS * 100) + "% PARA SEMPRE");
+  showMsg("PIZZA DO PAPPONE  —  FÔLEGO MÁXIMO +" + round(PIZZA_BONUS * 100) + "% PARA SEMPRE");
 }
 
 void drawPizzas() {
   float t = millis() / 1000.0;
-  noStroke();
+  viewGraphics().noStroke();
   for (Secret s : secrets) {
     if (!s.opened || !s.pizza || s.eaten) continue;
     float x = (s.wi + 0.5) * CELL, y = (s.wj + 0.5) * CELL;
     float dd = dist(player.x, player.y, x, y);
     if (dd > CELL * 6) continue;
     itemLights(x, y, 125 + sin(t * 2.2) * 10, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5));
-    emissive(45, 28, 8);                        // a warm, blessed glow
-    pushMatrix();
-    translate(x, y, 125 + sin(t * 2.2) * 10);
-    rotateZ(t * 1.1);
-    rotateX(-HALF_PI + 1.15);                   // nearly upright, so the toppings face you as it spins
-    scale(1.1);
-    shape(pizzaModel);
-    popMatrix();
-    emissive(0);
-    flush();
+    viewGraphics().emissive(45, 28, 8);                        // a warm, blessed glow
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(x, y, 125 + sin(t * 2.2) * 10);
+    viewGraphics().rotateZ(t * 1.1);
+    viewGraphics().rotateX(-HALF_PI + 1.15);                   // nearly upright, so the toppings face you as it spins
+    viewGraphics().scale(1.1);
+    viewGraphics().shape(pizzaModel);
+    viewGraphics().popMatrix();
+    viewGraphics().emissive(0);
+    viewGraphics().flush();
   }
-  noLights();
-  lightFalloff(1, 0, 0);
-  specular(0);
+  viewGraphics().noLights();
+  viewGraphics().lightFalloff(1, 0, 0);
+  viewGraphics().specular(0);
 }
 
 // a textured OBJ as one triangle mesh (the Blender export flips handedness: mirror x back)
@@ -4312,29 +4525,29 @@ void canNoise(float x, float y, float loud) {
 
 void drawCans3D() {
   if (cans.isEmpty()) return;
-  noStroke();
+  viewGraphics().noStroke();
   for (Can c : cans) {
     float dd = dist(player.x, player.y, c.x, c.y);
     if (dd > CELL * 6) continue;
     itemLights(c.x, c.y, c.z, lerp(1, exp(-pow(dd / FOG_DIST, 1.5)), 0.5) * 0.7);   // white metal: keep the flashlight from blowing it out
-    pushMatrix();
-    translate(c.x, c.y, c.z);
-    rotateZ(c.heading);
-    rotateX(-HALF_PI + c.tumble);
-    scale(CAN_SCALE);
-    translate(0, 27, 0);                      // the model stands on its base: spin around its middle
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(c.x, c.y, c.z);
+    viewGraphics().rotateZ(c.heading);
+    viewGraphics().rotateX(-HALF_PI + c.tumble);
+    viewGraphics().scale(CAN_SCALE);
+    viewGraphics().translate(0, 27, 0);                      // the model stands on its base: spin around its middle
     drawItem(lataModel);
-    popMatrix();
-    flush();
+    viewGraphics().popMatrix();
+    viewGraphics().flush();
   }
-  noLights();
-  lightFalloff(1, 0, 0);
-  specular(0);
-  emissive(0);
+  viewGraphics().noLights();
+  viewGraphics().lightFalloff(1, 0, 0);
+  viewGraphics().specular(0);
+  viewGraphics().emissive(0);
 }
 
 float modelCan() {
-  shape(canModel);
+  viewGraphics().shape(canModel);
   return 100;
 }
 
@@ -4632,6 +4845,9 @@ float lampPower(int i, int j) {
 }
 
 void updateLampGrid() {
+  if (lightingGrid==null || lightingGrid.width!=GRID) lightingGrid=createImage(GRID,GRID,RGB);
+  if(shadowListsDirty || shadowWalls==null || shadowWalls.height!=GRID*GRID) rebuildShadowLists();
+  lightingGrid.loadPixels();
   java.util.Arrays.fill(mapU, 0);
   java.util.Arrays.fill(wallU, 0);
   for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
@@ -4641,7 +4857,9 @@ void updateLampGrid() {
     mapU[idx / 4] += code * PACK[idx % 4];
     int edges = (hasWallX(i + 1, j) ? 1 : 0) + (hasWallY(i, j + 1) ? 2 : 0);
     wallU[idx / 8] += edges * (1 << (2 * (idx % 8)));
+    lightingGrid.pixels[idx]=0xff000000|(code<<16)|(edges<<8)|shadowWallCounts[idx];
   }
+  lightingGrid.updatePixels();
   humLevel = 0;
   float acc = 0;
   int pi = cellOf(player.x), pj = cellOf(player.y);
@@ -4672,12 +4890,45 @@ void setVoice(Controller v, float gain, float pan) {
 
 // =====================================================================
 // RENDER
-void render() {
+PImage lightingGrid, shadowWalls;
+int[] shadowWallCounts;
+boolean shadowListsDirty=true;
+void bindLightingGrid(PShader sh) { bindLightingGrid(viewGraphics(),sh); }
+void bindLightingGrid(PGraphics target,PShader sh) {
+  if(lightingGrid!=null && shadowWalls!=null) {
+    prepareLightingData(target,lightingGrid);
+    prepareLightingData(target,shadowWalls);
+    sh.set("lightingGrid",lightingGrid);sh.set("shadowWalls",shadowWalls);sh.set("useLightingGrid",1.0);
+  } else sh.set("useLightingGrid",0.0);
+}
+// These images store byte-sized counts, wall coordinates and orientation IDs.
+// Filtering them as colors invents walls. A negative mip bias alone does not
+// disable Processing's automatic anisotropic filtering at cell boundaries.
+java.util.WeakHashMap<processing.opengl.Texture,Integer> exactLightingTextures=new java.util.WeakHashMap<processing.opengl.Texture,Integer>();
+void prepareLightingData(PGraphics target,PImage data) {
+  processing.opengl.PGraphicsOpenGL pg=(processing.opengl.PGraphicsOpenGL)target;
+  processing.opengl.Texture tex=pg.getTexture(data);
+  Integer prepared=exactLightingTextures.get(tex);
+  if(prepared!=null && prepared.intValue()==tex.glName && !tex.usingMipmaps() && tex.currentSampling()==POINT)return;
+  tex.usingMipmaps(false,POINT);
+  com.jogamp.opengl.GL gl=((processing.opengl.PJOGL)pg.pgl).gl;
+  if(gl.isExtensionAvailable("GL_EXT_texture_filter_anisotropic") || gl.isExtensionAvailable("GL_ARB_texture_filter_anisotropic")) {
+    int[] active={0},binding={0};
+    gl.glGetIntegerv(com.jogamp.opengl.GL.GL_ACTIVE_TEXTURE,active,0);
+    gl.glActiveTexture(com.jogamp.opengl.GL.GL_TEXTURE0);
+    gl.glGetIntegerv(com.jogamp.opengl.GL.GL_TEXTURE_BINDING_2D,binding,0);
+    gl.glBindTexture(tex.glTarget,tex.glName);
+    gl.glTexParameterf(tex.glTarget,0x84FE,1.0); // GL_TEXTURE_MAX_ANISOTROPY_EXT
+    gl.glBindTexture(tex.glTarget,binding[0]);gl.glActiveTexture(active[0]);
+  }
+  exactLightingTextures.put(tex,tex.glName);
+}
+void renderScene() {
   advanceGIBake();
-  float dg = danger(threatD);
+  float dg = visualDanger(danger(threatD));
   float pulse = kickEnv * chaseLvl;
   float dgV = max(dg, chaseLvl * 0.4);
-  background(9, 8, 4);
+  viewGraphics().background(9, 8, 4);
 
   float ex = camX, ey = camY, ez = camZ;
   float lx = camDX, ly = camDY, lz = camDZ;
@@ -4685,13 +4936,15 @@ void render() {
   float rollR = cameraRoll;
 
   // the lens pass zooms the center in by 'fe': widen the field of view to keep the same framing
-  float aspectR = float(width) / height;
-  float fe = 1 + LENS_FISHEYE * 0.25 * (aspectR * aspectR + 1);
-  perspective(2 * atan(tan((fov - pulse * radians(2.5)) / 2) * fe), aspectR, 10, CELL * GRID * 1.5);
-  camera(ex, ey, ez, ex + lx, ey + ly, ez + lz, rx * sin(rollR), ry * sin(rollR), -cos(rollR));
+  float aspectR = float(viewWidth()) / viewHeight();
+  lensFovNow = fov - pulse * radians(2.5);
+  float fe = lensEdge();
+  updateShutter();
+  viewGraphics().perspective(2 * atan(tan(lensFovNow / 2) * fe), aspectR, 10, CELL * GRID * 1.5);
+  viewGraphics().camera(ex, ey, ez, ex + lx, ey + ly, ez + lz, rx * sin(rollR), ry * sin(rollR), -cos(rollR));
 
   for (Enemy e : enemies) {
-    PVector sp = lensWarp(screenX(e.pos.x, e.pos.y, 135), screenY(e.pos.x, e.pos.y, 135));
+    PVector sp = lensWarp(viewGraphics().screenX(e.pos.x, e.pos.y, 135), viewGraphics().screenY(e.pos.x, e.pos.y, 135));
     e.sx = sp.x;
     e.sy = sp.y;
     e.inFront = (e.pos.x - ex) * lx + (e.pos.y - ey) * ly > 0;
@@ -4705,8 +4958,9 @@ void render() {
   yAx.normalize();
 
   float haze = 0.5 + localLight;
-  noLights();
-  shader(world);
+  viewGraphics().noLights();
+  viewGraphics().shader(world);
+  bindLightingGrid(world);
   world.set("camPos", ex, ey, ez);
   world.set("camDir", lx, ly, lz);
   world.set("camRight", xAx.x, xAx.y, xAx.z);
@@ -4723,12 +4977,15 @@ void render() {
   world.set("wallH", WALL_H);
   world.set("wallHalf", WALL_THICKNESS / 2);
   world.set("lampZ", WALL_H - 3);
-  world.set("exposure", EXPOSURE_BASE * exposureAdapt);
+  world.set("exposure", EXPOSURE_BASE * exposureAdapt * pow(2,visualValue("exposure",0)));
   world.set("fogDist", FOG_DIST);
   world.set("fogColor", 0.075 * haze, 0.068 * haze, 0.045 * haze);
-  world.set("volOn", VOLUMETRIC ? 1.0 : 0.0);
-  world.set("wetDebug", SHOW_WET_MASK ? 1.0 : 0.0);
-  float fl = flashlightStrength();
+  world.set("volOn", visualValue("fog",VOLUMETRIC?1:0));
+  world.set("debugNoShadows",1-visualValue("shadows",1));
+  world.set("debugNoBounce",1-visualValue("bounce",1));
+  world.set("debugNoAO",1-visualValue("ao",1));
+  world.set("wetDebug", visualValue("wet",SHOW_WET_MASK?1:0));
+  float fl = visualFlash();
   world.set("flash", FLASH_POWER * fl);
   world.set("flashPos", flashPos.x, flashPos.y, flashPos.z);
   world.set("flashDir", flashDir.x, flashDir.y, flashDir.z);
@@ -4738,9 +4995,9 @@ void render() {
   world.set("flashCone", FLASH_OUTER_COS, FLASH_INNER_COS);
   world.set("emissive", 0.0);
 
-  textureWrap(REPEAT);
+  viewGraphics().textureWrap(REPEAT);
   world.set("wallpaper", 1.0);
-  drawVisibleLevel(g, xAx, yAx, tan((fov - pulse * radians(2.5)) / 2) * fe, aspectR);
+  drawVisibleLevel(viewGraphics(), xAx, yAx, tan(lensFovNow / 2) * fe, aspectR);
   world.set("wallpaper", 0.0);
   drawDecals();
   drawArrows();
@@ -4748,81 +5005,74 @@ void render() {
   drawPanels();
   drawCerts();
   for (Enemy e : enemies) drawEnemy(e);
-  resetShader();
+  viewGraphics().resetShader();
 
   drawDrops3D();
   drawCans3D();
   drawPizzas();
   drawXray();
   drawViewModel3D();
-  meterCamera(g);
+  meterCamera(viewGraphics());
 
   begin2D();
-  applyLens();                       // 1. the player's eye: fish-eye, grain, micro-blur
+  applyLens();                       // 1. optics, shutter, CCD and camera DSP
   drawOverlay(dgV, pulse);          // 2. view effects and fade-in
   applyTape();                      // 3. recording signal
-  drawCamOsd(dgV);                  // 4. crisp character generator
-  applyPost(dgV, spotFlash * 0.5);   // 4. tape faults and camera exposure noise
-  drawHUD();                        // 5. gameplay HUD on top
+  if(visualValue("osd",1)>.5)drawCamOsd(dgV);                  // 4. crisp character generator
+  applyPost(dgV, spotFlash * 0.5);   // 5. tape faults and tunable grade
+  applyCodec(viewGraphics());                    // 6. decoded SD copy, including the camcorder OSD
+  // Gameplay HUD is composited at display resolution after the recording.
   end2D();
 }
 
-void applyLens() {
-  lens.set("time", millis() / 1000.0);
-  lens.set("fisheye", LENS_FISHEYE);
-  lens.set("aspect", width / (float) height);
-  lens.set("grain", LENS_GRAIN);
-  lens.set("soft", LENS_SOFT);
-  filter(lens);
-}
+
 
 // where a point of the undistorted 3D frame ends up on screen after the lens pass
-PVector lensWarp(float x, float y) {
-  float asp = width / (float) height;
-  float edge = 1 + LENS_FISHEYE * 0.25 * (asp * asp + 1);
-  float sx = x / width - 0.5, sy = y / height - 0.5;
-  float cx = sx, cy = sy;
-  for (int k = 0; k < 5; k++) {
-    float f = (1 + LENS_FISHEYE * (sq(cx * asp) + sq(cy))) / edge;
-    cx = sx / f;
-    cy = sy / f;
-  }
-  return new PVector((cx + 0.5) * width, (cy + 0.5) * height);
-}
+
 
 void drawPanels() {
-  drawPanels(g);
+  drawPanels(viewGraphics());
 }
 
 // Batch emitters separately from ordinary plastic so each draw uses the right
 // shader state. The same path also supports offscreen renderer verification.
 void drawPanels(PGraphics target) {
-  target.textureWrap(CLAMP);
-  target.noStroke();
-  world.set("wallpaper",0.0); // preserve diffuser albedo rather than roof.jpg calibration
+  if (panelFrameTex == null) panelFrameTex=makePanelFrame();
+  target.textureWrap(CLAMP); target.noStroke(); target.fill(255);
+  world.set("wallpaper",0.0);
   int pi=cellOf(player.x),pj=cellOf(player.y);
-  float z=WALL_H-2,hw=CELL/12,hh=CELL/12;
+  float half=CELL/12,inner=half-PANEL_FRAME_WIDTH;
+  float frameZ=WALL_H-0.8,diffuserZ=WALL_H-0.25;
+  // Normally shaded metal trim. A ring, so it never covers the inset diffuser.
+  world.set("emissive",0.0); target.noTint();
+  target.beginShape(QUADS); target.texture(panelFrameTex);
+  for (int i=max(0,pi-6);i<=min(GRID-1,pi+6);i++) for (int j=max(0,pj-6);j<=min(GRID-1,pj+6);j++) {
+    if (solid[i][j]) continue;
+    float x=(i+0.5)*CELL,y=(j+0.5)*CELL;
+    fixtureQuad(target,x-half,y-half,x+half,y-inner,frameZ);
+    fixtureQuad(target,x-half,y+inner,x+half,y+half,frameZ);
+    fixtureQuad(target,x-half,y-inner,x-inner,y+inner,frameZ);
+    fixtureQuad(target,x+inner,y-inner,x+half,y+inner,frameZ);
+  }
+  target.endShape(); target.flush();
   for (int pass=0;pass<2;pass++) {
     world.set("emissive",pass==0?2.4:0.0);
+    target.beginShape(QUADS); target.texture(panelTex);
     for (int i=max(0,pi-6);i<=min(GRID-1,pi+6);i++) for (int j=max(0,pj-6);j<=min(GRID-1,pj+6);j++) {
       if (solid[i][j]) continue;
-      float p=lampP[i][j];
-      boolean dead=p<0.08;
+      float p=lampP[i][j]; boolean dead=p<0.08;
       if (dead!=(pass==1)) continue;
       if (dead) target.tint(232,228,214);
       else {
         float emission=pow(p,1.0/2.2);
         target.tint(lerp(12,255,emission),lerp(11,245,emission),lerp(9,205,emission));
       }
-      float cx=(i+0.5)*CELL,cy=(j+0.5)*CELL;
-      target.beginShape(QUADS);target.texture(panelTex);
-      target.vertex(cx-hw,cy-hh,z,0,0);target.vertex(cx+hw,cy-hh,z,1,0);
-      target.vertex(cx+hw,cy+hh,z,1,1);target.vertex(cx-hw,cy+hh,z,0,1);
-      target.endShape();
+      float x=(i+0.5)*CELL,y=(j+0.5)*CELL;
+      fixtureQuad(target,x-inner,y-inner,x+inner,y+inner,diffuserZ);
     }
-    target.flush(); // uniform changes must not reach geometry queued by the preceding pass
+    target.endShape(); target.flush();
   }
-  target.noTint();
+  target.noTint(); world.set("emissive",0.0);
 }
 
 void drawEnemy(Enemy e) {
@@ -4836,13 +5086,13 @@ void drawEnemy(Enemy e) {
   int strips = 14;
 
   world.set("emissive", stunned ? 0.6 : 0.18 + 0.25 * dg + 0.15 * chaseLvl);
-  textureWrap(CLAMP);
-  noStroke();
-  if (stunned) tint(130, 180, 255);
-  else noTint();
-  pushMatrix();
-  translate(e.pos.x, e.pos.y, 0);
-  rotateZ(atan2(player.y - e.pos.y, player.x - e.pos.x));
+  viewGraphics().textureWrap(CLAMP);
+  viewGraphics().noStroke();
+  if (stunned) viewGraphics().tint(130, 180, 255);
+  else viewGraphics().noTint();
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(e.pos.x, e.pos.y, 0);
+  viewGraphics().rotateZ(atan2(player.y - e.pos.y, player.x - e.pos.x));
   for (int k = 0; k < strips; k++) {
     float v0 = k / (float) strips, v1 = (k + 1) / (float) strips;
     float off = 0;
@@ -4852,41 +5102,31 @@ void drawEnemy(Enemy e) {
       off = (noise(k * 0.7 + e.ch * 5, millis() * 0.012) - 0.5) * 2 * glitch;
     }
     float zTop = base + s - v0 * s, zBot = base + s - v1 * s;
-    beginShape(QUADS);
-    texture(faces[e.ch]);
-    vertex(0,  s / 2 + off, zTop, 0, v0);
-    vertex(0, -s / 2 + off, zTop, 1, v0);
-    vertex(0, -s / 2 + off, zBot, 1, v1);
-    vertex(0,  s / 2 + off, zBot, 0, v1);
-    endShape();
+    viewGraphics().beginShape(QUADS);
+    viewGraphics().texture(faces[e.ch]);
+    viewGraphics().vertex(0,  s / 2 + off, zTop, 0, v0);
+    viewGraphics().vertex(0, -s / 2 + off, zTop, 1, v0);
+    viewGraphics().vertex(0, -s / 2 + off, zBot, 1, v1);
+    viewGraphics().vertex(0,  s / 2 + off, zBot, 0, v1);
+    viewGraphics().endShape();
   }
-  popMatrix();
-  noTint();
-  flush();
+  viewGraphics().popMatrix();
+  viewGraphics().noTint();
+  viewGraphics().flush();
 }
 
 void begin2D() {
-  hint(DISABLE_DEPTH_TEST);
-  camera();
-  perspective();
-  noLights();
+  viewGraphics().hint(DISABLE_DEPTH_TEST);
+  viewGraphics().camera();
+  viewGraphics().perspective();
+  viewGraphics().noLights();
 }
 
 void end2D() {
-  hint(ENABLE_DEPTH_TEST);
+  viewGraphics().hint(ENABLE_DEPTH_TEST);
 }
 
-void applyPost(float dg, float hit) {
-  post.set("time", millis() / 1000.0);
-  post.set("footage", state == PLAYING ? 1.0 : 0.0);
-  post.set("danger", dg);
-  post.set("hit", hit);
-  post.set("gain", state == PLAYING ? camGain : 0.3);
-  post.set("vhs", state == MENU ? max(VHS_AMOUNT, 0.6) : VHS_AMOUNT);
-  post.set("fisheye", OSD_FISHEYE);
-  post.set("aspect", width / (float) height);
-  filter(post);
-}
+
 
 // =====================================================================
 // 2D EFFECTS AROUND THE VIEW MODEL (matched to the lens)
@@ -4903,15 +5143,15 @@ void drawViewFx() {
   if (now < fireUntil) {
     float k = 1 - (fireUntil - now) / 350.0;
     PVector tip = lensWarp(tipSX, tipSY);
-    float tx = width / 2 + random(-30, 30), ty = height / 2 + random(-20, 20);
+    float tx = viewWidth() / 2 + random(-30, 30), ty = viewHeight() / 2 + random(-20, 20);
     if (taserHit && boltEnemy != null && boltEnemy.inFront) {
-      tx = constrain(boltEnemy.sx, 0, width);
-      ty = constrain(boltEnemy.sy, 0, height);
+      tx = constrain(boltEnemy.sx, 0, viewWidth());
+      ty = constrain(boltEnemy.sy, 0, viewHeight());
     }
     drawBolt(tip.x, tip.y, tx, ty);
-    noStroke();
-    fill(120, 190, 255, 90 * (1 - k));
-    rect(0, 0, width, height);
+    viewGraphics().noStroke();
+    viewGraphics().fill(120, 190, 255, 90 * (1 - k));
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
   }
   drawParticles();
 }
@@ -4925,20 +5165,20 @@ void drawBolt(float x0, float y0, float x1, float y1) {
     px[k] = lerp(x0, x1, t) + random(-j, j);
     py[k] = lerp(y0, y1, t) + random(-j, j);
   }
-  noFill();
+  viewGraphics().noFill();
   for (int pass = 0; pass < 2; pass++) {
     if (pass == 0) {
-      stroke(90, 170, 255, 180);
-      strokeWeight(8);
+      viewGraphics().stroke(90, 170, 255, 180);
+      viewGraphics().strokeWeight(8);
     } else {
-      stroke(235, 245, 255);
-      strokeWeight(2.5);
+      viewGraphics().stroke(235, 245, 255);
+      viewGraphics().strokeWeight(2.5);
     }
-    beginShape();
-    for (int k = 0; k <= n; k++) vertex(px[k], py[k]);
-    endShape();
+    viewGraphics().beginShape();
+    for (int k = 0; k <= n; k++) viewGraphics().vertex(px[k], py[k]);
+    viewGraphics().endShape();
   }
-  noStroke();
+  viewGraphics().noStroke();
 }
 
 void spawnParticle(float x, float y, int type) {
@@ -4954,114 +5194,123 @@ void spawnParticle(float x, float y, int type) {
 }
 
 void drawParticles() {
-  noStroke();
+  viewGraphics().noStroke();
   for (int k = parts.size() - 1; k >= 0; k--) {
     Particle p = parts.get(k);
     p.vy += 900 * frameDt;
     p.x += p.vx * frameDt;
     p.y += p.vy * frameDt;
     p.life -= frameDt * 1.2;
-    if (p.life <= 0 || p.y > height + 20) {
+    if (p.life <= 0 || p.y > viewHeight() + 20) {
       parts.remove(k);
       continue;
     }
-    fill(p.col, 255 * p.life);
-    rect(p.x, p.y, p.sz, p.sz);
+    viewGraphics().fill(p.col, 255 * p.life);
+    viewGraphics().rect(p.x, p.y, p.sz, p.sz);
   }
 }
 
 // =====================================================================
 // VIEW EFFECTS (before tape); the camcorder character generator follows tape
 void drawOverlay(float dg, float pulse) {
-  rectMode(CORNER);
-  noStroke();
+  viewGraphics().rectMode(CORNER);
+  viewGraphics().noStroke();
   if (dg > 0) {
     float beat = pow(abs(sin(millis() * 0.001 * PI * (1 + 2.5 * dg))), 8);
-    fill(160, 0, 0, dg * (60 + 90 * beat));
-    rect(0, 0, width, height);
+    viewGraphics().fill(160, 0, 0, dg * (60 + 90 * beat));
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
   }
   if (pulse > 0.01) {
-    noFill();
-    stroke(200, 0, 0, 140 * pulse);
-    strokeWeight(70);
-    rect(0, 0, width, height);
-    noStroke();
+    viewGraphics().noFill();
+    viewGraphics().stroke(200, 0, 0, 140 * pulse);
+    viewGraphics().strokeWeight(70);
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
+    viewGraphics().noStroke();
   }
   if (spotFlash > 0) {
-    fill(255, 40, 30, 120 * spotFlash);
-    rect(0, 0, width, height);
+    viewGraphics().fill(255, 40, 30, 120 * spotFlash);
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
   }
   if (millis() < ghostUntil) {
-    fill(80, 140, 255, 32 + 14 * sin(millis() * 0.004));
-    rect(0, 0, width, height);
+    viewGraphics().fill(80, 140, 255, 32 + 14 * sin(millis() * 0.004));
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
   }
   drawViewFx();
-  float fadeIn = 1 - constrain(survived / 1.5, 0, 1);
+  float fadeIn = visualDebugOpen?0:1 - constrain(survived / 1.5, 0, 1);
   if (fadeIn > 0) {
-    fill(0, 255 * fadeIn);
-    rect(0, 0, width, height);
+    viewGraphics().fill(0, 255 * fadeIn);
+    viewGraphics().rect(0, 0, viewWidth(), viewHeight());
   }
 
 }
 
 // The character generator follows the tape bandwidth filter, before final noise.
 void drawCamOsd(float dg) {
-  pushStyle(); rectMode(CORNER);
+  beginUi();
+  viewGraphics().pushStyle(); viewGraphics().rectMode(CORNER);
   // viewfinder corners
   float m = 40, L = 46;
-  stroke(255, 140);
-  strokeWeight(3);
-  noFill();
-  line(m, m, m + L, m);                          line(m, m, m, m + L);
-  line(width - m, m, width - m - L, m);          line(width - m, m, width - m, m + L);
-  line(m, height - m, m + L, height - m);        line(m, height - m, m, height - m - L);
-  line(width - m, height - m, width - m - L, height - m);
-  line(width - m, height - m, width - m, height - m - L);
-  noStroke();
+  viewGraphics().stroke(255, 140);
+  viewGraphics().strokeWeight(3);
+  viewGraphics().noFill();
+  viewGraphics().line(m, m, m + L, m);                          viewGraphics().line(m, m, m, m + L);
+  viewGraphics().line(uiWidth() - m, m, uiWidth() - m - L, m);          viewGraphics().line(uiWidth() - m, m, uiWidth() - m, m + L);
+  viewGraphics().line(m, uiHeight() - m, m + L, uiHeight() - m);        viewGraphics().line(m, uiHeight() - m, m, uiHeight() - m - L);
+  viewGraphics().line(uiWidth() - m, uiHeight() - m, uiWidth() - m - L, uiHeight() - m);
+  viewGraphics().line(uiWidth() - m, uiHeight() - m, uiWidth() - m, uiHeight() - m - L);
+  viewGraphics().noStroke();
 
-  textFont(fontMono);
+  viewGraphics().textFont(fontMono);
   if ((millis() / 600) % 2 == 0) {
-    fill(225, 30, 30);
-    ellipse(width - 168, 72, 16, 16);
+    viewGraphics().fill(225, 30, 30);
+    viewGraphics().ellipse(uiWidth() - 168, 72, 16, 16);
   }
-  textAlign(LEFT, CENTER);
-  textSize(24);
-  osdText("REC", width - 150, 70, color(255, 215));
+  viewGraphics().textAlign(LEFT, CENTER);
+  viewGraphics().textSize(24);
+  osdText("REC", uiWidth() - 150, 70, color(255, 215));
 
-  textSize(20);
-  textAlign(LEFT, BOTTOM);
+  viewGraphics().textSize(20);
+  viewGraphics().textAlign(LEFT, BOTTOM);
   osdText(nf(day(), 2) + " " + MESES[month() - 1] + " " + year() + "   "
-    + nf(hour(), 2) + ":" + nf(minute(), 2) + ":" + nf(second(), 2), 70, height - 62, color(255, 215));
-  textAlign(RIGHT, BOTTOM);
-  osdText("SP", width - 130, height - 62, color(255, 215));
-  drawBattery(width - 118, height - 84, dg);
+    + nf(hour(), 2) + ":" + nf(minute(), 2) + ":" + nf(second(), 2), 70, uiHeight() - 62, color(255, 215));
+  viewGraphics().textAlign(RIGHT, BOTTOM);
+  osdText("SP", uiWidth() - 130, uiHeight() - 62, color(255, 215));
+  drawBattery(uiWidth() - 118, uiHeight() - 84, dg);
+  if (SHOW_EXPOSURE_OSD) {
+    viewGraphics().textSize(16); viewGraphics().textAlign(LEFT, BOTTOM);
+    float fStop = pow(2, round(6 * log2(irisN)) / 6.0);
+    int db = round(gainDbApplied);
+    osdText("F" + nf(fStop, 1, 1) + "   " + (db > 0 ? "+" + db + "dB" : "0dB"),
+      70, uiHeight() - 92, color(255, 190));
+  }
 
   drawOsd();
-  popStyle();
+  viewGraphics().popStyle();
+  endUi();
 }
 
 // camcorder-style text: white with a soft drop shadow, part of the image
 void osdText(String s, float x, float y, int c) {
-  fill(0, 120);
-  text(s, x + 2, y + 2);
-  fill(c);
-  text(s, x, y);
+  viewGraphics().fill(0, 120);
+  viewGraphics().text(s, x + 2, y + 2);
+  viewGraphics().fill(c);
+  viewGraphics().text(s, x, y);
 }
 
 void drawBattery(float x, float y, float dg) {
-  noFill();
-  stroke(0, 110);
-  strokeWeight(2);
-  rect(x + 2, y + 2, 44, 20);
-  stroke(255, 215);
-  rect(x, y, 44, 20);
-  noStroke();
-  fill(255, 215);
-  rect(x + 44, y + 6, 4, 8);
+  viewGraphics().noFill();
+  viewGraphics().stroke(0, 110);
+  viewGraphics().strokeWeight(2);
+  viewGraphics().rect(x + 2, y + 2, 44, 20);
+  viewGraphics().stroke(255, 215);
+  viewGraphics().rect(x, y, 44, 20);
+  viewGraphics().noStroke();
+  viewGraphics().fill(255, 215);
+  viewGraphics().rect(x + 44, y + 6, 4, 8);
   boolean blink = dg > 0.5 && (millis() / 250) % 2 == 0;
   for (int k = 0; k < 3; k++) {
     if (k == 2 && blink) continue;
-    rect(x + 4 + k * 13, y + 4, 10, 12);
+    viewGraphics().rect(x + 4 + k * 13, y + 4, 10, 12);
   }
 }
 
@@ -5070,16 +5319,16 @@ void drawOsd() {
   int now = millis();
   float x = 72, y = 74;
   int white = color(255, 225), dim = color(255, 165);
-  textFont(fontMono);
-  textAlign(LEFT, CENTER);
+  viewGraphics().textFont(fontMono);
+  viewGraphics().textAlign(LEFT, CENTER);
 
-  textSize(19);
+  viewGraphics().textSize(19);
   osdText(gameMode == ENDLESS ? "ENDLESS  " + rosterTitle() : dayLabel() + "  " + rosterTitle(), x, y, white);
-  textSize(34);
+  viewGraphics().textSize(34);
   osdText(fmtTime(survived), x, y + 36, white);
 
   float ly = y + 72;
-  textSize(15);
+  viewGraphics().textSize(15);
   if (gameMode == ENDLESS) {
     osdText("MELHOR  " + fmtTime(best), x, ly, dim);
   } else {
@@ -5087,16 +5336,16 @@ void drawOsd() {
       boolean extra = k >= certsRequired;
       float pw = extra ? 9 : 12, ph = extra ? 12 : 16;
       float px = x + k * 18, py = ly - ph / 2;
-      noFill();
-      strokeWeight(2);
-      stroke(0, 110);
-      rect(px + 2, py + 2, pw, ph);
-      stroke(255, 220);
-      rect(px, py, pw, ph);
-      noStroke();
+      viewGraphics().noFill();
+      viewGraphics().strokeWeight(2);
+      viewGraphics().stroke(0, 110);
+      viewGraphics().rect(px + 2, py + 2, pw, ph);
+      viewGraphics().stroke(255, 220);
+      viewGraphics().rect(px, py, pw, ph);
+      viewGraphics().noStroke();
       if (k < certsTaken) {
-        fill(255, 225);
-        rect(px + 3, py + 3, pw - 6, ph - 6);
+        viewGraphics().fill(255, 225);
+        viewGraphics().rect(px + 3, py + 3, pw - 6, ph - 6);
       }
     }
     float tx = x + certsPlaced * 18 + 8;
@@ -5116,15 +5365,15 @@ void drawOsd() {
     int left = until[k] - now;
     if (left <= 0) continue;
     int lit = ceil(left / (float) dur[k] * 10);
-    textSize(14);
+    viewGraphics().textSize(14);
     osdText(label[k], x, by, white);
-    noStroke();
+    viewGraphics().noStroke();
     for (int s = 0; s < 10; s++) {
       float sx = x + 122 + s * 9;
-      fill(0, 100);
-      rect(sx + 2, by - 3, 6, 9);
-      fill(s < lit ? col[k] : color(255, 45));
-      rect(sx, by - 5, 6, 9);
+      viewGraphics().fill(0, 100);
+      viewGraphics().rect(sx + 2, by - 3, 6, 9);
+      viewGraphics().fill(s < lit ? col[k] : color(255, 45));
+      viewGraphics().rect(sx, by - 5, 6, 9);
     }
     by += 24;
   }
@@ -5133,26 +5382,26 @@ void drawOsd() {
 // =====================================================================
 // HUD (after the filter)
 void hudSlab(float x, float y, float w, float h) {
-  noStroke();
-  fill(0, 205);
-  rect(x, y, w, h);
-  stroke(255, 28);
-  strokeWeight(1);
-  noFill();
-  rect(x + 0.5, y + 0.5, w - 1, h - 1);
-  noStroke();
+  viewGraphics().noStroke();
+  viewGraphics().fill(0, 205);
+  viewGraphics().rect(x, y, w, h);
+  viewGraphics().stroke(255, 28);
+  viewGraphics().strokeWeight(1);
+  viewGraphics().noFill();
+  viewGraphics().rect(x + 0.5, y + 0.5, w - 1, h - 1);
+  viewGraphics().noStroke();
 }
 
 void drawHazard(float x, float y, float w, float h) {
-  noStroke();
-  fill(230, 180, 20);
-  rect(x, y, w, h);
-  fill(10);
+  viewGraphics().noStroke();
+  viewGraphics().fill(230, 180, 20);
+  viewGraphics().rect(x, y, w, h);
+  viewGraphics().fill(10);
   float sw = 12;
   for (float s = x - h; s < x + w; s += sw * 2) {
     float a0 = constrain(s, x, x + w), a1 = constrain(s + sw, x, x + w);
     float b0 = constrain(s + h, x, x + w), b1 = constrain(s + sw + h, x, x + w);
-    quad(a0, y + h, a1, y + h, b1, y, b0, y);
+    viewGraphics().quad(a0, y + h, a1, y + h, b1, y, b0, y);
   }
 }
 
@@ -5170,92 +5419,94 @@ String dayLabel() {
 }
 
 void drawHUD() {
-  rectMode(CORNER);
-  imageMode(CORNER);
-  noStroke();
+  beginUi();
+  viewGraphics().rectMode(CORNER);
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().noStroke();
   int now = millis();
 
   drawStamina();
   drawInventory();
 
-  float cx = width / 2, cy = height / 2;
-  stroke(235, 150);
-  strokeWeight(2);
-  line(cx - 9, cy, cx - 4, cy);
-  line(cx + 4, cy, cx + 9, cy);
-  line(cx, cy - 9, cx, cy - 4);
-  line(cx, cy + 4, cx, cy + 9);
-  noStroke();
+  float cx = uiWidth() / 2, cy = uiHeight() / 2;
+  viewGraphics().stroke(235, 150);
+  viewGraphics().strokeWeight(2);
+  viewGraphics().line(cx - 9, cy, cx - 4, cy);
+  viewGraphics().line(cx + 4, cy, cx + 9, cy);
+  viewGraphics().line(cx, cy - 9, cx, cy - 4);
+  viewGraphics().line(cx, cy + 4, cx, cy + 9);
+  viewGraphics().noStroke();
 
-  drawEyes(width / 2, 80);
+  drawEyes(uiWidth() / 2, 80);
 
   if (gameMode == FUGA && nearCert >= 0) {
-    textFont(fontHud);
-    textSize(22);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(22);
     String p = "[E]  PEGAR CERTIFICADO";
-    float tw = textWidth(p);
-    fill(0, 200);
-    rect(width / 2 - tw / 2 - 16, height / 2 + 40, tw + 32, 36);
-    fill(225, 200, 120);
-    rect(width / 2 - tw / 2 - 16, height / 2 + 40, 6, 36);
-    fill(235, 230, 215);
-    textAlign(CENTER, CENTER);
-    text(p, width / 2, height / 2 + 57);
+    float tw = viewGraphics().textWidth(p);
+    viewGraphics().fill(0, 200);
+    viewGraphics().rect(uiWidth() / 2 - tw / 2 - 16, uiHeight() / 2 + 40, tw + 32, 36);
+    viewGraphics().fill(225, 200, 120);
+    viewGraphics().rect(uiWidth() / 2 - tw / 2 - 16, uiHeight() / 2 + 40, 6, 36);
+    viewGraphics().fill(235, 230, 215);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().text(p, uiWidth() / 2, uiHeight() / 2 + 57);
   } else if (peekSide == 0 && (peekL != null || peekR != null)) {
-    textFont(fontMono);
-    textSize(13);
-    fill(235, 230, 215, 140);
-    textAlign(CENTER, CENTER);
-    text((peekL != null ? "[Q] <  " : "") + "ESPREITAR" + (peekR != null ? "  > [E]" : ""), width / 2, height / 2 + 44);
+    viewGraphics().textFont(fontMono);
+    viewGraphics().textSize(13);
+    viewGraphics().fill(235, 230, 215, 140);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().text((peekL != null ? "[Q] <  " : "") + "ESPREITAR" + (peekR != null ? "  > [E]" : ""), uiWidth() / 2, uiHeight() / 2 + 44);
   }
 
   if (now < msgUntil) {
     float a = constrain((msgUntil - now) / 400.0, 0, 1);
-    textFont(fontHud);
-    textSize(24);
-    float tw = textWidth(msg);
-    float my = height / 2 + 100;
-    fill(0, 215 * a);
-    rect(width / 2 - tw / 2 - 18, my, tw + 36, 40);
-    fill(170, 20, 15, 255 * a);
-    rect(width / 2 - tw / 2 - 18, my, 6, 40);
-    fill(235, 230, 215, 255 * a);
-    textAlign(CENTER, CENTER);
-    text(msg, width / 2, my + 19);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(24);
+    float tw = viewGraphics().textWidth(msg);
+    float my = uiHeight() / 2 + 100;
+    viewGraphics().fill(0, 215 * a);
+    viewGraphics().rect(uiWidth() / 2 - tw / 2 - 18, my, tw + 36, 40);
+    viewGraphics().fill(170, 20, 15, 255 * a);
+    viewGraphics().rect(uiWidth() / 2 - tw / 2 - 18, my, 6, 40);
+    viewGraphics().fill(235, 230, 215, 255 * a);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().text(msg, uiWidth() / 2, my + 19);
   }
 
   // ---- intro card
   if (survived < graceTime + 1) {
     float a = 255 * constrain(min(survived * 2, (graceTime + 1 - survived) * 2), 0, 1);
-    textAlign(CENTER, CENTER);
-    textFont(fontHud);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().textFont(fontHud);
     if (gameMode == FUGA) {
-      textSize(64);
-      fill(235, 230, 215, a);
-      text(dayLabel(), width / 2, height / 2 - 150);
-      textSize(30);
-      fill(200, 40, 30, a);
-      String sub = runDay == RECUP_DAY ? "TODOS ELES  —  NO ESCURO"
-        : (runDay == FINAL_DAY ? "VS. 6  —  TODOS ELES" : rosterTitle() + "  —  " + NICKS[DAY_ORDER[runDay]].toUpperCase());
-      text(sub, width / 2, height / 2 - 100);
-      textFont(fontMono);
-      textSize(15);
-      fill(200, a);
+      viewGraphics().textSize(64);
+      viewGraphics().fill(235, 230, 215, a);
+      viewGraphics().text(dayLabel(), uiWidth() / 2, uiHeight() / 2 - 150);
+      viewGraphics().textSize(30);
+      viewGraphics().fill(200, 40, 30, a);
+      String sub = runDay == RECUP_DAY ? "A ESCURIDÃO DO DESESPERO"
+        : (runDay == FINAL_DAY ? "VERSUS 6" : rosterTitle() + "  —  " + NICKS[DAY_ORDER[runDay]].toUpperCase());
+      viewGraphics().text(sub, uiWidth() / 2, uiHeight() / 2 - 100);
+      viewGraphics().textFont(fontMono);
+      viewGraphics().textSize(15);
+      viewGraphics().fill(200, a);
       String hint = runDay == RECUP_DAY ? "UM CERTIFICADO. NENHUMA LUZ. ENCONTRE A SAÍDA."
         : (runDay == FINAL_DAY ? "COLETE OS 3 CERTIFICADOS E ENCONTRE A SAÍDA" : "SIGA AS SETAS");
-      text(hint, width / 2, height / 2 - 62);
+      viewGraphics().text(hint, uiWidth() / 2, uiHeight() / 2 - 62);
     } else {
-      textSize(46);
-      fill(235, 230, 215, a);
-      text(runEntry >= 6 ? "TODOS ACORDARAM... CORRA!" : rosterTitle() + " ACORDOU... CORRA!", width / 2, height / 2 - 130);
-      textFont(fontMono);
-      textSize(15);
-      fill(200, a);
-      text("SHIFT CORRER   C AGACHAR   1-5 COMER/BEBER   R TASER   G LATA   Q/E NA QUINA ESPREITAR   ESC PAUSA", width / 2, height / 2 - 88);
+      viewGraphics().textSize(46);
+      viewGraphics().fill(235, 230, 215, a);
+      viewGraphics().text(runEntry >= 6 ? "TODOS ACORDARAM... CORRA!" : rosterTitle() + " ACORDOU... CORRA!", uiWidth() / 2, uiHeight() / 2 - 130);
+      viewGraphics().textFont(fontMono);
+      viewGraphics().textSize(15);
+      viewGraphics().fill(200, a);
+      viewGraphics().text("SHIFT CORRER   C AGACHAR   1-5 COMER/BEBER   R TASER   G LATA   Q/E NA QUINA ESPREITAR   ESC PAUSA", uiWidth() / 2, uiHeight() / 2 - 88);
     }
   }
 
   drawToasts();
+  endUi();
 }
 
 // The Eye: shows the most alarming state among the nerdolas (Isa only once she's close)
@@ -5268,20 +5519,20 @@ void drawStamina() {
   int segs = round((fed ? 30 : 20) * pizzaMul());
   float sw = 15, gap = 3;
   float bw = segs * (sw + gap) - gap;
-  float bx = width / 2 - bw / 2, by = height - 64;
+  float bx = uiWidth() / 2 - bw / 2, by = uiHeight() - 64;
   hudSlab(bx - 8, by - 8, bw + 16, 26);
   int lit = ceil(stamina / smax * segs - 0.001);
   boolean blinkOff = exhausted && (now / 160) % 2 == 0;
   for (int k = 0; k < segs; k++) {
     if (k < lit && !blinkOff) {
-      if (energized) fill(255, 160, 30);
-      else if (exhausted) fill(200, 25, 15);
-      else if (fed) fill(235, 205, 140);
-      else fill(225, 215, 180);
+      if (energized) viewGraphics().fill(255, 160, 30);
+      else if (exhausted) viewGraphics().fill(200, 25, 15);
+      else if (fed) viewGraphics().fill(235, 205, 140);
+      else viewGraphics().fill(225, 215, 180);
     } else {
-      fill(255, 22);
+      viewGraphics().fill(255, 22);
     }
-    rect(bx + k * (sw + gap), by, sw, 10);
+    viewGraphics().rect(bx + k * (sw + gap), by, sw, 10);
   }
 }
 
@@ -5291,7 +5542,7 @@ void drawInventory() {
   ArrayList<Integer> shown = new ArrayList<Integer>(slotOrder);
   if (inv[LATA] > 0) shown.add(LATA);
   if (inv[TASER] > 0) shown.add(TASER);
-  float slot = 72, sz = 64, y = height - 160;
+  float slot = 72, sz = 64, y = uiHeight() - 160;
   int n = shown.size();
   for (int k = 0; k < ITEM_NAMES.length; k++) {
     int idx = shown.indexOf(k);
@@ -5300,7 +5551,7 @@ void drawInventory() {
     lastInv[k] = inv[k];
     slotPop[k] *= exp(-frameDt * 7);
     if (on) {
-      float tx = width / 2 + (idx - (n - 1) / 2.0) * slot;
+      float tx = uiWidth() / 2 + (idx - (n - 1) / 2.0) * slot;
       if (slotShow[k] < 0.02) slotX[k] = tx;
       slotX[k] = lerp(slotX[k], tx, 1 - exp(-frameDt * 12));
       slotKey[k] = keyFor(k);
@@ -5308,56 +5559,56 @@ void drawInventory() {
     slotShow[k] = lerp(slotShow[k], on ? 1 : 0, 1 - exp(-frameDt * (on ? 10 : 7)));
   }
 
-  rectMode(CENTER);
-  imageMode(CENTER);
+  viewGraphics().rectMode(CENTER);
+  viewGraphics().imageMode(CENTER);
   for (int k = 0; k < ITEM_NAMES.length; k++) {
     float a = slotShow[k];
     if (a < 0.02) continue;
     float s = sz * (0.6 + 0.4 * a) * (1 + 0.18 * slotPop[k]);
     float x = slotX[k], cy = y + sz / 2 + (1 - a) * 24;
-    noStroke();
-    fill(0, 215 * a);
-    rect(x, cy, s, s);
-    stroke(useType == k ? color(200, 30, 20, 255 * a) : color(200, 190, 160, 255 * a));
-    strokeWeight(3);
-    noFill();
-    rect(x, cy, s, s);
-    noStroke();
+    viewGraphics().noStroke();
+    viewGraphics().fill(0, 215 * a);
+    viewGraphics().rect(x, cy, s, s);
+    viewGraphics().stroke(useType == k ? color(200, 30, 20, 255 * a) : color(200, 190, 160, 255 * a));
+    viewGraphics().strokeWeight(3);
+    viewGraphics().noFill();
+    viewGraphics().rect(x, cy, s, s);
+    viewGraphics().noStroke();
     if (useType == k) {
       float t = constrain((now - useStart) / (float) USE_MS[k], 0, 1);
-      fill(200, 30, 20, 200 * a);
-      rect(x - s / 2 + s * t / 2, cy + s / 2 - 3, s * t, 4);
+      viewGraphics().fill(200, 30, 20, 200 * a);
+      viewGraphics().rect(x - s / 2 + s * t / 2, cy + s / 2 - 3, s * t, 4);
     }
-    tint(255, 255 * a);
-    image(itemTex[k], x, cy + 2, s * 0.78, s * 0.78);
-    noTint();
+    viewGraphics().tint(255, 255 * a);
+    viewGraphics().image(itemTex[k], x, cy + 2, s * 0.78, s * 0.78);
+    viewGraphics().noTint();
     if (slotKey[k].length() > 0) {
-      fill(225, 215, 180, 255 * a);
-      rect(x - s / 2 + 8.5, cy - s / 2 + 8.5, 17, 17);
-      fill(0, 255 * a);
-      textFont(fontMono);
-      textSize(12);
-      textAlign(CENTER, CENTER);
-      text(slotKey[k], x - s / 2 + 8.5, cy - s / 2 + 7.5);
+      viewGraphics().fill(225, 215, 180, 255 * a);
+      viewGraphics().rect(x - s / 2 + 8.5, cy - s / 2 + 8.5, 17, 17);
+      viewGraphics().fill(0, 255 * a);
+      viewGraphics().textFont(fontMono);
+      viewGraphics().textSize(12);
+      viewGraphics().textAlign(CENTER, CENTER);
+      viewGraphics().text(slotKey[k], x - s / 2 + 8.5, cy - s / 2 + 7.5);
     }
     if (inv[k] > 0) {
-      textFont(fontHud);
-      textSize(17);
-      fill(235, 255 * a);
-      textAlign(RIGHT, BOTTOM);
-      text("x" + inv[k], x + s / 2 - 4, cy + s / 2 + 1);
+      viewGraphics().textFont(fontHud);
+      viewGraphics().textSize(17);
+      viewGraphics().fill(235, 255 * a);
+      viewGraphics().textAlign(RIGHT, BOTTOM);
+      viewGraphics().text("x" + inv[k], x + s / 2 - 4, cy + s / 2 + 1);
     }
   }
-  rectMode(CORNER);
-  imageMode(CORNER);
+  viewGraphics().rectMode(CORNER);
+  viewGraphics().imageMode(CORNER);
 }
 
 void eyeShape(float w, float op) {
-  beginShape();
-  vertex(-w / 2, 0);
-  bezierVertex(-w / 4, -op * 1.3, w / 4, -op * 1.3, w / 2, 0);
-  bezierVertex(w / 4, op * 1.3, -w / 4, op * 1.3, -w / 2, 0);
-  endShape(CLOSE);
+  viewGraphics().beginShape();
+  viewGraphics().vertex(-w / 2, 0);
+  viewGraphics().bezierVertex(-w / 4, -op * 1.3, w / 4, -op * 1.3, w / 2, 0);
+  viewGraphics().bezierVertex(w / 4, op * 1.3, -w / 4, op * 1.3, -w / 2, 0);
+  viewGraphics().endShape(CLOSE);
 }
 
 void drawToasts() {
@@ -5373,53 +5624,54 @@ void drawToasts() {
   float slide = t < 0.3 ? t / 0.3 : (t > 2.9 ? 1 - (t - 2.9) / 0.3 : 1);
   slide = slide * slide * (3 - 2 * slide);
   float w = 420, h = 80;
-  float x = width + 10 - (w + 50) * slide, y = 120;
-  rectMode(CORNER);
+  float x = uiWidth() + 10 - (w + 50) * slide, y = 120;
+  viewGraphics().rectMode(CORNER);
   hudSlab(x, y, w, h);
   drawHazard(x, y, w, 7);
-  fill(255, 200, 40);
-  noStroke();
+  viewGraphics().fill(255, 200, 40);
+  viewGraphics().noStroke();
   drawStar(x + 40, y + h / 2 + 3, 20);
-  textFont(fontMono);
-  textAlign(LEFT, TOP);
-  textSize(12);
-  text("CONQUISTA DESBLOQUEADA", x + 72, y + 16);
-  textFont(fontHud);
-  textSize(24);
-  fill(240);
-  text(ACH_NAME[id].toUpperCase(), x + 72, y + 36);
+  viewGraphics().textFont(fontMono);
+  viewGraphics().textAlign(LEFT, TOP);
+  viewGraphics().textSize(12);
+  viewGraphics().text("CONQUISTA DESBLOQUEADA", x + 72, y + 16);
+  viewGraphics().textFont(fontHud);
+  viewGraphics().textSize(24);
+  viewGraphics().fill(240);
+  viewGraphics().text(ACH_NAME[id].toUpperCase(), x + 72, y + 36);
 }
 
 void drawStar(float x, float y, float r) {
-  beginShape();
+  viewGraphics().beginShape();
   for (int k = 0; k < 10; k++) {
     float a = -HALF_PI + k * PI / 5;
     float rr = k % 2 == 0 ? r : r * 0.45;
-    vertex(x + cos(a) * rr, y + sin(a) * rr);
+    viewGraphics().vertex(x + cos(a) * rr, y + sin(a) * rr);
   }
-  endShape(CLOSE);
+  viewGraphics().endShape(CLOSE);
 }
 
 void drawRunAch(float y, float a, boolean dark) {
   if (runAch.isEmpty()) return;
-  textFont(fontUI);
-  textAlign(CENTER, TOP);
-  textSize(18);
-  fill(dark ? color(150, 100, 0, 255 * a) : color(255, 210, 90, 255 * a));
-  text("★ Conquistas desbloqueadas ★", width / 2, y);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textAlign(CENTER, TOP);
+  viewGraphics().textSize(18);
+  viewGraphics().fill(dark ? color(150, 100, 0, 255 * a) : color(255, 210, 90, 255 * a));
+  viewGraphics().text("★ Conquistas desbloqueadas ★", uiWidth() / 2, y);
   String line = "";
   for (int k = 0; k < runAch.size(); k++) line += (k > 0 ? "   ·   " : "") + ACH_NAME[runAch.get(k)];
-  textSize(16);
-  fill(dark ? color(40, 255 * a) : color(240, 255 * a));
-  text(line, width / 2 - 560, y + 28, 1120, 80);
+  viewGraphics().textSize(16);
+  viewGraphics().fill(dark ? color(40, 255 * a) : color(240, 255 * a));
+  viewGraphics().text(line, uiWidth() / 2 - 560, y + 28, 1120, 80);
 }
 
 // =====================================================================
 // END SCREENS
 void drawDeath() {
   begin2D();
-  background(0);
-  imageMode(CENTER);
+  beginUi();
+  viewGraphics().background(0);
+  viewGraphics().imageMode(CENTER);
   float t = (millis() - deathMs) / 1000.0;
   float hit = 0;
   if (t < 1.0) {
@@ -5431,101 +5683,108 @@ void drawDeath() {
       sting[k].setFrequency(STING_F[k] * (1 - 0.4 * t));
       sting[k].setAmplitude(0.08 * (1 - t));
     }
-    float sz = lerp(height * 0.6, height * 1.6, t);
+    float sz = lerp(uiHeight() * 0.6, uiHeight() * 1.6, t);
     boolean flash = random(1) < 0.3;
-    tint(255, flash ? 40 : 255, flash ? 40 : 255);
-    image(faces[killerCh], width / 2 + random(-25, 25), height / 2 + random(-25, 25), sz, sz);
-    noTint();
+    viewGraphics().tint(255, flash ? 40 : 255, flash ? 40 : 255);
+    viewGraphics().image(faces[killerCh], uiWidth() / 2 + random(-25, 25), uiHeight() / 2 + random(-25, 25), sz, sz);
+    viewGraphics().noTint();
   } else {
     staticAmp.setValue(0);
     boom.setAmplitude(0);
     for (Oscil o : sting) o.setAmplitude(0);
     if (voices[killerCh].isPlaying()) voices[killerCh].pause();
     float a = constrain((t - 1) / 0.7, 0, 1);
-    float sz = height * (1.08 - 0.08 * a);
-    tint(90 * a, 0, 0);
-    image(faces[killerCh], width / 2, height / 2, sz, sz);
-    noTint();
-    textAlign(CENTER, CENTER);
-    textFont(fontBig);
-    textSize(90);
-    fill(255, 255 * a);
-    text("MORRESTE", width / 2, height / 2 - 110);
-    textFont(fontUI);
-    textSize(40);
+    float sz = uiHeight() * (1.08 - 0.08 * a);
+    viewGraphics().tint(90 * a, 0, 0);
+    viewGraphics().image(faces[killerCh], uiWidth() / 2, uiHeight() / 2, sz, sz);
+    viewGraphics().noTint();
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().textFont(fontBig);
+    viewGraphics().textSize(90);
+    viewGraphics().fill(255, 255 * a);
+    viewGraphics().text("MORRESTE", uiWidth() / 2, uiHeight() / 2 - 110);
+    viewGraphics().textFont(fontUI);
+    viewGraphics().textSize(40);
     if (gameMode == ENDLESS) {
-      text("Sobreviveu " + nf(survived, 0, 1) + "s", width / 2, height / 2 - 20);
-      textSize(28);
-      fill(newRecord ? color(255, 230, 120, 255 * a) : color(220, 255 * a));
-      text(newRecord ? "NOVO RECORDE!" : "Recorde: " + nf(best, 0, 1) + "s", width / 2, height / 2 + 32);
+      viewGraphics().text("Sobreviveu " + nf(survived, 0, 1) + "s", uiWidth() / 2, uiHeight() / 2 - 20);
+      viewGraphics().textSize(28);
+      viewGraphics().fill(newRecord ? color(255, 230, 120, 255 * a) : color(220, 255 * a));
+      viewGraphics().text(newRecord ? "NOVO RECORDE!" : "Recorde: " + nf(best, 0, 1) + "s", uiWidth() / 2, uiHeight() / 2 + 32);
     } else {
-      text(dayLabel() + "  —  Certificados: " + certsTaken + "/" + certsPlaced, width / 2, height / 2 - 20);
-      textSize(28);
-      fill(220, 255 * a);
-      text("Pego por " + NAMES[killerCh] + "  ·  " + fmtTime(survived), width / 2, height / 2 + 32);
+      viewGraphics().text(dayLabel() + "  —  Certificados: " + certsTaken + "/" + certsPlaced, uiWidth() / 2, uiHeight() / 2 - 20);
+      viewGraphics().textSize(28);
+      viewGraphics().fill(220, 255 * a);
+      viewGraphics().text("Pego por " + NAMES[killerCh] + "  ·  " + fmtTime(survived), uiWidth() / 2, uiHeight() / 2 + 32);
     }
-    textSize(20);
-    fill(200, 255 * a);
-    text("Itens coletados: " + itemsCollected + "     Consumidos: " + itemsUsed + "     Atordoamentos: " + stuns
-      + "     Fugas: " + chasesEscaped, width / 2, height / 2 + 76);
-    drawRunAch(height / 2 + 115, a, false);
-    textSize(22);
-    fill(200, 255 * a);
-    text("[R] tentar de novo     [M] menu", width / 2, height - 80);
+    viewGraphics().textSize(20);
+    viewGraphics().fill(200, 255 * a);
+    viewGraphics().text("Itens coletados: " + itemsCollected + "     Consumidos: " + itemsUsed + "     Atordoamentos: " + stuns
+      + "     Fugas: " + chasesEscaped, uiWidth() / 2, uiHeight() / 2 + 76);
+    drawRunAch(uiHeight() / 2 + 115, a, false);
+    viewGraphics().textSize(22);
+    viewGraphics().fill(200, 255 * a);
+    viewGraphics().text("[R] tentar de novo     [M] menu", uiWidth() / 2, uiHeight() - 80);
   }
+  endUi();
   applyPost(t < 1 ? 1 : 0.2, hit);
+  beginUi();
   drawToasts();
-  imageMode(CORNER);
+  viewGraphics().imageMode(CORNER);
+  endUi();
   end2D();
 }
 
 void drawWin() {
   begin2D();
+  beginUi();
   float t = (millis() - winMs) / 1000.0;
   float a = constrain((t - 0.4) / 0.8, 0, 1);
-  noStroke();
+  viewGraphics().noStroke();
   for (int k = 0; k < 30; k++) {
-    fill(lerpColor(color(150, 190, 230), color(245, 235, 205), k / 29.0));
-    rect(0, k * height / 30.0, width, height / 30.0 + 1);
+    viewGraphics().fill(lerpColor(color(150, 190, 230), color(245, 235, 205), k / 29.0));
+    viewGraphics().rect(0, k * uiHeight() / 30.0, uiWidth(), uiHeight() / 30.0 + 1);
   }
   if (t > 2) {
-    imageMode(CENTER);
+    viewGraphics().imageMode(CENTER);
     boolean tw = random(1) < 0.04;
-    tint(255, 40 + (tw ? 60 : 0));
-    image(faces[winFaceCh], width * 0.88 + (tw ? random(-6, 6) : 0), height * 0.78, 90, 90);
-    noTint();
-    imageMode(CORNER);
+    viewGraphics().tint(255, 40 + (tw ? 60 : 0));
+    viewGraphics().image(faces[winFaceCh], uiWidth() * 0.88 + (tw ? random(-6, 6) : 0), uiHeight() * 0.78, 90, 90);
+    viewGraphics().noTint();
+    viewGraphics().imageMode(CORNER);
   }
-  textAlign(CENTER, CENTER);
-  textFont(fontBig);
-  textSize(80);
-  fill(30, 255 * a);
-  text(runDay == RECUP_DAY ? "RECUPERAÇÃO CONCLUÍDA" : (runDay == FINAL_DAY ? "SEMANA CONCLUÍDA" : "DIA " + (runDay + 1) + " CONCLUÍDO"),
-    width / 2, height / 2 - 160);
-  textFont(fontUI);
-  textSize(34);
-  text("Tempo: " + fmtTime(survived) + "     Certificados: " + certsTaken + "/" + certsPlaced, width / 2, height / 2 - 75);
-  textSize(24);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textFont(fontBig);
+  viewGraphics().textSize(80);
+  viewGraphics().fill(30, 255 * a);
+  viewGraphics().text(runDay == RECUP_DAY ? "RECUPERAÇÃO CONCLUÍDA" : (runDay == FINAL_DAY ? "SEMANA CONCLUÍDA" : "DIA " + (runDay + 1) + " CONCLUÍDO"),
+    uiWidth() / 2, uiHeight() / 2 - 160);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textSize(34);
+  viewGraphics().text("Tempo: " + fmtTime(survived) + "     Certificados: " + certsTaken + "/" + certsPlaced, uiWidth() / 2, uiHeight() / 2 - 75);
+  viewGraphics().textSize(24);
   int h = hoursValidated();
-  fill(runDay < DAYS && h > winHoursBefore ? color(30, 120, 40, 255 * a) : color(60, 255 * a));
-  if (runDay < DAYS) text("Horas validadas: " + h + "h/36h" + (h > winHoursBefore ? "   (+" + (h - winHoursBefore) + "h)" : ""), width / 2, height / 2 - 30);
-  else text(runDay == RECUP_DAY ? "Aprovado na recuperação." : "Os certificados do VS. 6 não contam horas.", width / 2, height / 2 - 30);
+  viewGraphics().fill(runDay < DAYS && h > winHoursBefore ? color(30, 120, 40, 255 * a) : color(60, 255 * a));
+  if (runDay < DAYS) viewGraphics().text("Horas validadas: " + h + "h/36h" + (h > winHoursBefore ? "   (+" + (h - winHoursBefore) + "h)" : ""), uiWidth() / 2, uiHeight() / 2 - 30);
+  else viewGraphics().text(runDay == RECUP_DAY ? "Aprovado na recuperação." : "Os certificados do VS. 6 não contam horas.", uiWidth() / 2, uiHeight() / 2 - 30);
   if (runDay < DAYS) {
-    fill(170, 110, 0, 255 * a);
-    if (runDay + 1 < DAYS) text("★ Desbloqueado: Dia " + (runDay + 2) + " — " + NAMES[DAY_ORDER[runDay + 1]], width / 2, height / 2 + 8);
-    else text("★ Desbloqueado: Dia 7 — VS. 6", width / 2, height / 2 + 8);
+    viewGraphics().fill(170, 110, 0, 255 * a);
+    if (runDay + 1 < DAYS) viewGraphics().text("★ Desbloqueado: Dia " + (runDay + 2) + " — " + NAMES[DAY_ORDER[runDay + 1]], uiWidth() / 2, uiHeight() / 2 + 8);
+    else viewGraphics().text("★ Desbloqueado: Dia 7 — VS. 6", uiWidth() / 2, uiHeight() / 2 + 8);
   }
-  drawRunAch(height / 2 + 80, a, true);
-  textSize(22);
-  fill(60, 255 * a);
-  text(emailPending ? "[ENTER] você tem um novo e-mail" : "[R] jogar de novo     [M] menu", width / 2, height - 80);
+  drawRunAch(uiHeight() / 2 + 80, a, true);
+  viewGraphics().textSize(22);
+  viewGraphics().fill(60, 255 * a);
+  viewGraphics().text(emailPending ? "[ENTER] você tem um novo e-mail" : "[R] jogar de novo     [M] menu", uiWidth() / 2, uiHeight() - 80);
   float fl = 1 - constrain(t / 0.9, 0, 1);
   if (fl > 0) {
-    fill(255, 255 * fl);
-    rect(0, 0, width, height);
+    viewGraphics().fill(255, 255 * fl);
+    viewGraphics().rect(0, 0, uiWidth(), uiHeight());
   }
+  endUi();
   applyPost(0.05, 0);
+  beginUi();
   drawToasts();
+  endUi();
   end2D();
 }
 
@@ -5542,103 +5801,107 @@ String emailBody() {
 
 void drawEmail() {
   begin2D();
+  beginUi();
   float t = (millis() - emailMs) / 1000.0;
-  background(0);
-  imageMode(CORNER);
-  float sc = max(width / (float) pucprBg.width, height / (float) pucprBg.height) * 1.08;
-  tint(165);
-  image(pucprBg, width / 2 - pucprBg.width * sc / 2 + sin(t * 0.2) * 8, height / 2 - pucprBg.height * sc / 2,
+  viewGraphics().background(0);
+  viewGraphics().imageMode(CORNER);
+  float sc = max(uiWidth() / (float) pucprBg.width, uiHeight() / (float) pucprBg.height) * 1.08;
+  viewGraphics().tint(165);
+  viewGraphics().image(pucprBg, uiWidth() / 2 - pucprBg.width * sc / 2 + sin(t * 0.2) * 8, uiHeight() / 2 - pucprBg.height * sc / 2,
     pucprBg.width * sc, pucprBg.height * sc);
-  noTint();
-  noStroke();
-  fill(0, 80);
-  rect(0, 0, width, height);
+  viewGraphics().noTint();
+  viewGraphics().noStroke();
+  viewGraphics().fill(0, 80);
+  viewGraphics().rect(0, 0, uiWidth(), uiHeight());
 
   String body = emailBody();
   int nChars = (int) constrain((t - 0.8) * 55, 0, body.length());
   boolean done = nChars >= body.length();
 
-  pushMatrix();
-  translate(width / 2, height / 2 - 10);
-  rotate(-0.045);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(uiWidth() / 2, uiHeight() / 2 - 10);
+  viewGraphics().rotate(-0.045);
   float cw = 860, chh = 560;
   float x0 = -cw / 2, y0 = -chh / 2;
-  fill(0, 90);
-  rect(x0 + 12, y0 + 16, cw, chh);
-  fill(248, 247, 243);
-  rect(x0, y0, cw, chh);
-  fill(165, 28, 40);
-  rect(x0, y0, cw, 46);
-  fill(255);
-  textFont(fontUI);
-  textSize(18);
-  textAlign(LEFT, CENTER);
-  text("Webmail PUCPR  —  Caixa de entrada", x0 + 20, y0 + 23);
-  textFont(fontMail);
-  textSize(15);
-  textAlign(LEFT, TOP);
-  fill(110);
-  text("De:", x0 + 30, y0 + 64);
-  text("Para:", x0 + 30, y0 + 88);
-  text("Assunto:", x0 + 30, y0 + 112);
-  fill(30);
-  text("Andrey Cabral <andrey.cabral@pucpr.br>", x0 + 115, y0 + 64);
-  text("você <aluno@pucpr.edu.br>", x0 + 115, y0 + 88);
-  text("Horas complementares — POLIWEEK", x0 + 115, y0 + 112);
-  stroke(210);
-  strokeWeight(1);
-  line(x0 + 30, y0 + 142, x0 + cw - 30, y0 + 142);
-  noStroke();
-  fill(25);
-  textSize(19);
-  textLeading(28);
-  text(body.substring(0, nChars) + (done || (millis() / 300) % 2 == 0 ? "" : "|"), x0 + 40, y0 + 162, cw - 80, chh - 190);
+  viewGraphics().fill(0, 90);
+  viewGraphics().rect(x0 + 12, y0 + 16, cw, chh);
+  viewGraphics().fill(248, 247, 243);
+  viewGraphics().rect(x0, y0, cw, chh);
+  viewGraphics().fill(165, 28, 40);
+  viewGraphics().rect(x0, y0, cw, 46);
+  viewGraphics().fill(255);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textSize(18);
+  viewGraphics().textAlign(LEFT, CENTER);
+  viewGraphics().text("Caixa de entrada", x0 + 20, y0 + 23);
+  viewGraphics().textFont(fontMail);
+  viewGraphics().textSize(15);
+  viewGraphics().textAlign(LEFT, TOP);
+  viewGraphics().fill(110);
+  viewGraphics().text("De:", x0 + 30, y0 + 64);
+  viewGraphics().text("Para:", x0 + 30, y0 + 88);
+  viewGraphics().text("Assunto:", x0 + 30, y0 + 112);
+  viewGraphics().fill(30);
+  viewGraphics().text("Andrey Cabral <andrey.cabral@pucpr.br>", x0 + 115, y0 + 64);
+  viewGraphics().text("você <aluno@pucpr.edu.br>", x0 + 115, y0 + 88);
+  viewGraphics().text("Horas complementares — POLIWEEK", x0 + 115, y0 + 112);
+  viewGraphics().stroke(210);
+  viewGraphics().strokeWeight(1);
+  viewGraphics().line(x0 + 30, y0 + 142, x0 + cw - 30, y0 + 142);
+  viewGraphics().noStroke();
+  viewGraphics().fill(25);
+  viewGraphics().textSize(19);
+  viewGraphics().textLeading(28);
+  viewGraphics().text(body.substring(0, nChars) + (done || (millis() / 300) % 2 == 0 ? "" : "|"), x0 + 40, y0 + 162, cw - 80, chh - 190);
   if (done) {
-    pushMatrix();
-    translate(cw / 2 - 175, chh / 2 - 95);
-    rotate(-0.22);
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(cw / 2 - 175, chh / 2 - 95);
+    viewGraphics().rotate(-0.22);
     int sc2 = emailSuccess ? color(30, 140, 50) : color(185, 25, 25);
-    stroke(sc2);
-    strokeWeight(5);
-    noFill();
-    rectMode(CENTER);
-    rect(0, 0, 260, 70);
-    rectMode(CORNER);
-    noStroke();
-    fill(sc2);
-    textFont(fontHud);
-    textSize(40);
-    textAlign(CENTER, CENTER);
-    text(emailSuccess ? "DEFERIDO" : "INDEFERIDO", 0, 0);
-    popMatrix();
+    viewGraphics().stroke(sc2);
+    viewGraphics().strokeWeight(5);
+    viewGraphics().noFill();
+    viewGraphics().rectMode(CENTER);
+    viewGraphics().rect(0, 0, 260, 70);
+    viewGraphics().rectMode(CORNER);
+    viewGraphics().noStroke();
+    viewGraphics().fill(sc2);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(40);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().text(emailSuccess ? "DEFERIDO" : "INDEFERIDO", 0, 0);
+    viewGraphics().popMatrix();
   }
-  popMatrix();
+  viewGraphics().popMatrix();
 
   if (done) {
-    textAlign(CENTER, CENTER);
-    textFont(fontHud);
-    textSize(28);
-    float by = height - (emailFirst && emailSuccess ? 128 : 92);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(28);
+    float by = uiHeight() - (emailFirst && emailSuccess ? 128 : 92);
     if (emailFirst) {
       String s = "7ª ESTRELA  —  ENDLESS DESBLOQUEADO";
-      fill(255, 215, 90);
-      drawStar(width / 2 - textWidth(s) / 2 - 30, by, 16);
-      text(s, width / 2, by);
+      viewGraphics().fill(255, 215, 90);
+      drawStar(uiWidth() / 2 - viewGraphics().textWidth(s) / 2 - 30, by, 16);
+      viewGraphics().text(s, uiWidth() / 2, by);
       by += 38;
     }
     if (emailSuccess) {
       String s = "8ª ESTRELA  —  RECUPERAÇÃO DESBLOQUEADA";
-      fill(90, 220, 110);
-      drawStar(width / 2 - textWidth(s) / 2 - 30, by, 16);
-      text(s, width / 2, by);
+      viewGraphics().fill(90, 220, 110);
+      drawStar(uiWidth() / 2 - viewGraphics().textWidth(s) / 2 - 30, by, 16);
+      viewGraphics().text(s, uiWidth() / 2, by);
     }
-    textFont(fontMono);
-    textSize(16);
-    fill(230);
-    text("[ENTER] continuar", width / 2, height - 46);
+    viewGraphics().textFont(fontMono);
+    viewGraphics().textSize(16);
+    viewGraphics().fill(230);
+    viewGraphics().text("[ENTER] continuar", uiWidth() / 2, uiHeight() - 46);
   }
+  endUi();
   applyPost(0.04, 0);
+  beginUi();
   drawToasts();
+  endUi();
   end2D();
 }
 
@@ -5646,33 +5909,36 @@ void drawEmail() {
 // MENU (FNAF 2 style)
 void drawMenu() {
   begin2D();
-  background(0);
+  beginUi();
+  viewGraphics().background(0);
   float t = millis() / 1000.0;
   updateTwitches();
   menuFlicker = random(1) < 0.04 ? random(0.35, 0.8) : 1;
 
-  imageMode(CORNER);
-  tint(menuPage == 0 ? 45 : 25);
-  image(menuImg, -20 + sin(t * 0.1) * 10, -10, width + 40, height + 20);
-  noTint();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().tint(menuPage == 0 ? 45 : 25);
+  viewGraphics().image(menuImg, -20 + sin(t * 0.1) * 10, -10, uiWidth() + 40, uiHeight() + 20);
+  viewGraphics().noTint();
 
   if (menuPage == 0) drawMenuPreview();
 
-  noStroke();
-  rectMode(CORNER);
+  viewGraphics().noStroke();
+  viewGraphics().rectMode(CORNER);
   for (int k = 0; k < 40; k++) {
-    fill(0, max(0, 235 - k * 6));
-    rect(k * 16, 0, 16, height);
+    viewGraphics().fill(0, max(0, 235 - k * 6));
+    viewGraphics().rect(k * 16, 0, 16, uiHeight());
   }
 
   drawStatic();
   if (menuPage == 0) drawMainMenu();
   else if (menuPage == 1) drawAchievementsPage();
-  else drawCatalogue();
+  else if(menuPage==2)drawCatalogue();
+  else drawVideoSettings();
 
   float pk = (millis() - pageSwitchMs) / 200.0;           // page change: full-screen static flick
-  if (pk < 1) drawSwitchStatic(0, 0, width, height, 0.7 * (1 - pk));
+  if (pk < 1) drawSwitchStatic(0, 0, uiWidth(), uiHeight(), 0.7 * (1 - pk));
 
+  endUi();
   applyPost(0.12 + menuStatic, menuStatic * 0.6);
   end2D();
 }
@@ -5699,15 +5965,15 @@ void pageStatic() {
 }
 
 void drawSwitchStatic(float x, float y, float w, float h, float amt) {
-  imageMode(CORNER);
-  tint(255, 150 * amt);
-  image(staticImg, x, y, w, h);
-  noTint();
-  noStroke();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().tint(255, 150 * amt);
+  viewGraphics().image(staticImg, x, y, w, h);
+  viewGraphics().noTint();
+  viewGraphics().noStroke();
   for (int k = 0; k < 7; k++) {
     float by = y + random(h), bh = random(2, 14);
-    fill(random(1) < 0.5 ? 255 : 0, 90 * amt);
-    rect(x, by, w, bh);
+    viewGraphics().fill(random(1) < 0.5 ? 255 : 0, 90 * amt);
+    viewGraphics().rect(x, by, w, bh);
   }
 }
 
@@ -5718,8 +5984,8 @@ boolean previewIsLineup() {
 // ---- right side: one preview per menu option
 void drawMenuPreview() {
   float k = constrain((millis() - switchMs) / 220.0, 0, 1);
-  pushMatrix();
-  if (k < 1) translate(random(-12, 12) * (1 - k), 0);
+  viewGraphics().pushMatrix();
+  if (k < 1) viewGraphics().translate(random(-12, 12) * (1 - k), 0);
   if (menuSel == 0) drawLineup();
   else if (menuSel == 1) {
     if (endlessUnlocked) drawLineup();
@@ -5729,21 +5995,22 @@ void drawMenuPreview() {
     else drawLockedPreview("???", "Valide 36h/36h na POLIWEEK para desbloquear.");
   } else if (menuSel == 3) drawCataloguePreview();
   else if (menuSel == 4) drawAchPreview();
+  else if(menuSel==5)drawLockedPreview("VÍDEO","Tela cheia, tamanho da janela e redimensionamento livre.");
   else drawExitPreview();
-  popMatrix();
+  viewGraphics().popMatrix();
   //if (k < 1) drawSwitchStatic(width * 0.42, 0, width * 0.58, height, 1 - k);
 }
 
 void previewLabel(String title, String sub) {
   float ly = lineY(0) + lineS(0) / 2 + 36;
-  textFont(fontUI);
-  textAlign(CENTER, CENTER);
-  textSize(28);
-  fill(235, 220 * menuFlicker);
-  text(title, lineX(0), ly);
-  textSize(16);
-  fill(170);
-  text(sub, lineX(0), ly + 30);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textSize(28);
+  viewGraphics().fill(235, 220 * menuFlicker);
+  viewGraphics().text(title, lineX(0), ly);
+  viewGraphics().textSize(16);
+  viewGraphics().fill(170);
+  viewGraphics().text(sub, lineX(0), ly + 30);
 }
 
 void updateTwitches() {
@@ -5782,8 +6049,8 @@ void setLineSel(int s) {
   else pwSel = s;
 }
 
-float lineX(float p) { return width * 0.69 + p * 95; }
-float lineY(float p) { return height * 0.56 - p * 36; }
+float lineX(float p) { return uiWidth() * 0.69 + p * 95; }
+float lineY(float p) { return uiHeight() * 0.56 - p * 36; }
 float lineS(float p) { return 470 * pow(0.8, p); }
 
 void drawLineup() {
@@ -5814,75 +6081,75 @@ void drawLineup() {
 void drawLineupFace(int tw, int ch, float x, float y, float sz, float bright, float alpha) {
   boolean twitching = millis() < twitchUntil[tw];
   float breathe = sin(millis() * 0.0011 + tw * 1.3);
-  pushMatrix();
-  translate(x, y + breathe * 3);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(x, y + breathe * 3);
   if (twitching) {
-    translate(twDx[tw], twDy[tw]);
-    rotate(twType[tw] == 3 ? twRot[tw] * 1.6 : twRot[tw] * 0.4);
+    viewGraphics().translate(twDx[tw], twDy[tw]);
+    viewGraphics().rotate(twType[tw] == 3 ? twRot[tw] * 1.6 : twRot[tw] * 0.4);
   } else {
-    rotate(breathe * 0.008);
+    viewGraphics().rotate(breathe * 0.008);
   }
   float s = sz * (twitching && twType[tw] == 2 ? 1.06 : 1);
-  if (twitching && twType[tw] == 2) tint(bright, bright * 0.25, bright * 0.25, alpha);
-  else tint(bright, alpha);
-  noStroke();
+  if (twitching && twType[tw] == 2) viewGraphics().tint(bright, bright * 0.25, bright * 0.25, alpha);
+  else viewGraphics().tint(bright, alpha);
+  viewGraphics().noStroke();
   if (twitching && twType[tw] == 1) {
     int strips = 8;
     for (int st = 0; st < strips; st++) {
       float v0 = st / (float) strips, v1 = (st + 1) / (float) strips;
       float off = random(-s * 0.06, s * 0.06);
-      beginShape(QUADS);
-      texture(faces[ch]);
-      vertex(-s / 2 + off, -s / 2 + v0 * s, 0, v0);
-      vertex( s / 2 + off, -s / 2 + v0 * s, 1, v0);
-      vertex( s / 2 + off, -s / 2 + v1 * s, 1, v1);
-      vertex(-s / 2 + off, -s / 2 + v1 * s, 0, v1);
-      endShape();
+      viewGraphics().beginShape(QUADS);
+      viewGraphics().texture(faces[ch]);
+      viewGraphics().vertex(-s / 2 + off, -s / 2 + v0 * s, 0, v0);
+      viewGraphics().vertex( s / 2 + off, -s / 2 + v0 * s, 1, v0);
+      viewGraphics().vertex( s / 2 + off, -s / 2 + v1 * s, 1, v1);
+      viewGraphics().vertex(-s / 2 + off, -s / 2 + v1 * s, 0, v1);
+      viewGraphics().endShape();
     }
   } else {
-    imageMode(CENTER);
-    image(faces[ch], 0, 0, s, s);
-    imageMode(CORNER);
+    viewGraphics().imageMode(CENTER);
+    viewGraphics().image(faces[ch], 0, 0, s, s);
+    viewGraphics().imageMode(CORNER);
   }
-  noTint();
-  popMatrix();
+  viewGraphics().noTint();
+  viewGraphics().popMatrix();
 }
 
 // the VS. 6 / TODOS card: all six faces crammed together
 void drawGroupFace(float x, float y, float sz, float bright, float alpha) {
   boolean twitching = millis() < twitchUntil[6];
-  pushMatrix();
-  translate(x, y);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(x, y);
   if (twitching) {
-    translate(twDx[6], twDy[6]);
-    rotate(twRot[6] * 0.4);
+    viewGraphics().translate(twDx[6], twDy[6]);
+    viewGraphics().rotate(twRot[6] * 0.4);
   }
   float f = sz * 0.36;
-  imageMode(CENTER);
+  viewGraphics().imageMode(CENTER);
   for (int k = 0; k < 6; k++) {
     float gx = (k % 3 - 1) * f * 0.95, gy = (k / 3 - 0.5) * f * 1.05;
     if (twitching && twType[6] == k % 4) gx += random(-8, 8);
-    tint(bright * (0.75 + 0.25 * noise(k, millis() * 0.001)), alpha);
-    image(faces[k], gx, gy, f, f);
+    viewGraphics().tint(bright * (0.75 + 0.25 * noise(k, millis() * 0.001)), alpha);
+    viewGraphics().image(faces[k], gx, gy, f, f);
   }
-  noTint();
-  imageMode(CORNER);
-  popMatrix();
+  viewGraphics().noTint();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().popMatrix();
 }
 
 void drawLockedPreview(String title, String hint) {
   float x = lineX(0), y = lineY(0);
   drawGroupFace(x, y, lineS(0), 20 * menuFlicker, 255);
-  noFill();
-  stroke(190, 185, 170);
-  strokeWeight(14);
-  arc(x, y - 18, 86, 100, PI, TWO_PI);
-  noStroke();
-  fill(190, 185, 170);
-  rect(x - 66, y - 20, 132, 98, 6);
-  fill(25);
-  ellipse(x, y + 18, 22, 22);
-  rect(x - 5, y + 18, 10, 34);
+  viewGraphics().noFill();
+  viewGraphics().stroke(190, 185, 170);
+  viewGraphics().strokeWeight(14);
+  viewGraphics().arc(x, y - 18, 86, 100, PI, TWO_PI);
+  viewGraphics().noStroke();
+  viewGraphics().fill(190, 185, 170);
+  viewGraphics().rect(x - 66, y - 20, 132, 98, 6);
+  viewGraphics().fill(25);
+  viewGraphics().ellipse(x, y + 18, 22, 22);
+  viewGraphics().rect(x - 5, y + 18, 10, 34);
   previewLabel(title, hint);
 }
 
@@ -5892,20 +6159,20 @@ void drawRecupPreview() {
   float t = millis() / 1000.0;
   float bx = x + (noise(t * 0.35) - 0.5) * s * 1.1, by = y + (noise(t * 0.35 + 9) - 0.5) * s * 0.7;
   float f = s * 0.36;
-  imageMode(CENTER);
+  viewGraphics().imageMode(CENTER);
   for (int k = 0; k < 6; k++) {
     float gx = x + (k % 3 - 1) * f * 0.95, gy = y + (k / 3 - 0.5) * f * 1.05;
     float lit = exp(-(sq(gx - bx) + sq(gy - by)) / sq(f * 0.75));
     boolean tw = millis() < twitchUntil[k];
-    tint((8 + 235 * lit) * menuFlicker, 255);
-    image(faces[k], gx + (tw ? twDx[k] * 0.4 : 0), gy + (tw ? twDy[k] * 0.4 : 0), f, f);
+    viewGraphics().tint((8 + 235 * lit) * menuFlicker, 255);
+    viewGraphics().image(faces[k], gx + (tw ? twDx[k] * 0.4 : 0), gy + (tw ? twDy[k] * 0.4 : 0), f, f);
   }
-  noTint();
-  imageMode(CORNER);
-  noStroke();
+  viewGraphics().noTint();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().noStroke();
   for (int r = 6; r > 0; r--) {
-    fill(255, 240, 210, 5);
-    ellipse(bx, by, f * r * 0.35, f * r * 0.35);
+    viewGraphics().fill(255, 240, 210, 5);
+    viewGraphics().ellipse(bx, by, f * r * 0.35, f * r * 0.35);
   }
   previewLabel("RECUPERAÇÃO", "Todos eles. Nenhuma luz. Um certificado." + (dayBeaten[RECUP_DAY] ? "   ·   ✓" : ""));
 }
@@ -5929,52 +6196,52 @@ void drawCataloguePreview() {
 
 void catCard(float cx, float cy, float rot, int kind, int idx, float flick) {
   float w = 240, h = 310;
-  pushMatrix();
-  translate(cx, cy);
-  rotate(rot + sin(millis() * 0.0007 + kind) * 0.01);
-  rectMode(CENTER);
-  imageMode(CENTER);
-  noStroke();
-  fill(0, 120);
-  rect(8, 10, w, h);
-  fill(226, 220, 200);
-  rect(0, 0, w, h);
-  fill(40, 36, 30);
-  rect(0, -20, w - 24, h - 80);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(cx, cy);
+  viewGraphics().rotate(rot + sin(millis() * 0.0007 + kind) * 0.01);
+  viewGraphics().rectMode(CENTER);
+  viewGraphics().imageMode(CENTER);
+  viewGraphics().noStroke();
+  viewGraphics().fill(0, 120);
+  viewGraphics().rect(8, 10, w, h);
+  viewGraphics().fill(226, 220, 200);
+  viewGraphics().rect(0, 0, w, h);
+  viewGraphics().fill(40, 36, 30);
+  viewGraphics().rect(0, -20, w - 24, h - 80);
   String cap;
   if (kind == 0) {
-    tint(idx >= 0 ? 225 : 14);
-    image(faces[idx >= 0 ? idx : DAY_ORDER[0]], 0, -20, w - 34, w - 34);
+    viewGraphics().tint(idx >= 0 ? 225 : 14);
+    viewGraphics().image(faces[idx >= 0 ? idx : DAY_ORDER[0]], 0, -20, w - 34, w - 34);
     cap = idx >= 0 ? NAMES[idx].toUpperCase() : "???";
   } else if (kind == 1) {
-    fill(170, 160, 95);
-    rect(0, -20, w - 24, h - 80);
+    viewGraphics().fill(170, 160, 95);
+    viewGraphics().rect(0, -20, w - 24, h - 80);
     if (idx >= 0) {
-      tint(255);
-      image(graffiti[idx], 0, -20, w - 30, (w - 30) * 0.5);
+      viewGraphics().tint(255);
+      viewGraphics().image(graffiti[idx], 0, -20, w - 30, (w - 30) * 0.5);
       cap = "PICHAÇÃO";
     } else {
       cap = "???";
     }
   } else {
-    tint(idx >= 0 ? 255 : 20);
-    image(itemTex[idx >= 0 ? idx : 0], 0, -20, 150, 150);
+    viewGraphics().tint(idx >= 0 ? 255 : 20);
+    viewGraphics().image(itemTex[idx >= 0 ? idx : 0], 0, -20, 150, 150);
     cap = idx >= 0 ? ITEM_NAMES[idx].toUpperCase() : "???";
   }
-  noTint();
+  viewGraphics().noTint();
   if (flick > 0) {
-    tint(255, 200 * flick);
-    image(staticImg, 0, -20, w - 24, h - 80);
-    noTint();
+    viewGraphics().tint(255, 200 * flick);
+    viewGraphics().image(staticImg, 0, -20, w - 24, h - 80);
+    viewGraphics().noTint();
   }
-  rectMode(CORNER);
-  imageMode(CORNER);
-  fill(40);
-  textFont(fontHud);
-  textAlign(CENTER, CENTER);
-  textSize(cap.length() > 16 ? 15 : 22);
-  text(cap, 0, h / 2 - 32);
-  popMatrix();
+  viewGraphics().rectMode(CORNER);
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().fill(40);
+  viewGraphics().textFont(fontHud);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textSize(cap.length() > 16 ? 15 : 22);
+  viewGraphics().text(cap, 0, h / 2 - 32);
+  viewGraphics().popMatrix();
 }
 
 // CONQUISTAS: a big star filling with your completion + what's next
@@ -5982,41 +6249,41 @@ void drawAchPreview() {
   float x = lineX(0), y = lineY(0) - 50, r = 165;
   int got = achCountVisible(), tot = achTotalVisible();
   float frac = tot > 0 ? got / (float) tot : 0;
-  noStroke();
-  fill(255, 16);
+  viewGraphics().noStroke();
+  viewGraphics().fill(255, 16);
   drawStar(x, y, r);
-  imageMode(CORNER);
+  viewGraphics().imageMode(CORNER);
   if (frac > 0) {
     clip(x - r, y - r + (1 - frac) * 2 * r, 2 * r, 2 * r * frac + 1);
-    fill(255, 205, 80, 225 * menuFlicker);
+    viewGraphics().fill(255, 205, 80, 225 * menuFlicker);
     drawStar(x, y, r);
     noClip();
   }
-  noFill();
-  stroke(255, 215, 90, 170);
-  strokeWeight(3);
+  viewGraphics().noFill();
+  viewGraphics().stroke(255, 215, 90, 170);
+  viewGraphics().strokeWeight(3);
   drawStar(x, y, r);
-  noStroke();
-  textFont(fontHud);
-  textAlign(CENTER, CENTER);
-  textSize(46);
-  fill(0, 140);
-  text(got + " / " + tot, x + 2, y + 22);
-  fill(245);
-  text(got + " / " + tot, x, y + 20);
+  viewGraphics().noStroke();
+  viewGraphics().textFont(fontHud);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textSize(46);
+  viewGraphics().fill(0, 140);
+  viewGraphics().text(got + " / " + tot, x + 2, y + 22);
+  viewGraphics().fill(245);
+  viewGraphics().text(got + " / " + tot, x, y + 20);
 
-  textFont(fontUI);
-  textSize(15);
-  fill(170);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textSize(15);
+  viewGraphics().fill(170);
   float ly = y + r + 18;
-  text(got == tot ? "TODAS DESBLOQUEADAS" : "PRÓXIMAS", x, ly);
-  textFont(fontMail);
-  textSize(15);
+  viewGraphics().text(got == tot ? "TODAS DESBLOQUEADAS" : "PRÓXIMAS", x, ly);
+  viewGraphics().textFont(fontMail);
+  viewGraphics().textSize(15);
   int shown = 0;
   for (int k = 0; k < ACH_NAME.length && shown < 3; k++) {
     if (!achVisible(k) || achUnlocked[k]) continue;
-    fill(215);
-    text(ACH_NAME[k] + "  —  " + ACH_DESC[k], x, ly + 28 + shown * 24);
+    viewGraphics().fill(215);
+    viewGraphics().text(ACH_NAME[k] + "  —  " + ACH_DESC[k], x, ly + 28 + shown * 24);
     shown++;
   }
 }
@@ -6026,23 +6293,23 @@ void drawExitPreview() {
   float x = lineX(0), y = lineY(0) - 10;
   int now = millis();
   float fl = random(1) < 0.06 ? random(0.3, 0.7) : 1;
-  noStroke();
+  viewGraphics().noStroke();
   for (int r = 8; r > 0; r--) {
-    fill(40, 200, 90, 6 * fl);
-    ellipse(x, y, r * 70, r * 90);
+    viewGraphics().fill(40, 200, 90, 6 * fl);
+    viewGraphics().ellipse(x, y, r * 70, r * 90);
   }
   float ph = (now % 9000) / 9000.0;
   float peek = constrain(sin(constrain((ph - 0.7) / 0.3, 0, 1) * PI) * 1.4, 0, 1);
-  imageMode(CENTER);
+  viewGraphics().imageMode(CENTER);
   if (peek > 0.01) {
-    tint(150, 255 * peek * 0.8);
-    image(faces[(now / 9000) % NAMES.length], x + 120 - 40 * peek, y - 40, 150, 150);
-    noTint();
+    viewGraphics().tint(150, 255 * peek * 0.8);
+    viewGraphics().image(faces[(now / 9000) % NAMES.length], x + 120 - 40 * peek, y - 40, 150, 150);
+    viewGraphics().noTint();
   }
-  tint(255 * fl);
-  image(exitTex, x, y, 256 * 0.85, 480 * 0.85);
-  noTint();
-  imageMode(CORNER);
+  viewGraphics().tint(255 * fl);
+  viewGraphics().image(exitTex, x, y, 256 * 0.85, 480 * 0.85);
+  viewGraphics().noTint();
+  viewGraphics().imageMode(CORNER);
 }
 
 void drawStatic() {
@@ -6052,58 +6319,58 @@ void drawStatic() {
     staticImg.updatePixels();
     lastStaticUpd = millis();
   }
-  imageMode(CORNER);
-  tint(255, 16 + 160 * menuStatic);
-  image(staticImg, 0, 0, width, height);
-  noTint();
-  noStroke();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().tint(255, 16 + 160 * menuStatic);
+  viewGraphics().image(staticImg, 0, 0, uiWidth(), uiHeight());
+  viewGraphics().noTint();
+  viewGraphics().noStroke();
   for (int k = 0; k < 3; k++) {
-    float y = (millis() * (0.05 + k * 0.03) + k * 300) % height;
-    fill(255, 10);
-    rect(0, y, width, 2 + k);
+    float y = (millis() * (0.05 + k * 0.03) + k * 300) % uiHeight();
+    viewGraphics().fill(255, 10);
+    viewGraphics().rect(0, y, uiWidth(), 2 + k);
   }
 }
 
-float optY(int i) { return 400 + i * 58; }
+float optY(int i) { return 386 + i * 52; }
 
 int hoveredOption() {
   for (int i = 0; i < MENU_OPTS.length; i++)
-    if (mouseX > 60 && mouseX < 560 && abs(mouseY - optY(i)) < 26) return i;
+    if (uiMouseX() > 60 && uiMouseX() < 560 && abs(uiMouseY() - optY(i)) < 26) return i;
   return -1;
 }
 
 void drawMainMenu() {
   float jx = random(1) < 0.03 ? random(-6, 6) : 0;
-  textFont(fontBig);
-  textAlign(LEFT, BASELINE);
-  fill(235);
-  textSize(72);
-  text("BACKROOMS:", 80 + jx, 130);
-  textSize(42);
-  text("Escape from the", 84, 192);
-  text("Nerdolas", 84, 240);
+  viewGraphics().textFont(fontBig);
+  viewGraphics().textAlign(LEFT, BASELINE);
+  viewGraphics().fill(235);
+  viewGraphics().textSize(72);
+  viewGraphics().text("BACKROOMS:", 80 + jx, 130);
+  viewGraphics().textSize(42);
+  viewGraphics().text("Escape from the", 84, 192);
+  viewGraphics().text("Nerdolas", 84, 240);
 
   // stars: 6 days, 7th = the week (e-mail), 8th (green) = 36h
-  noStroke();
+  viewGraphics().noStroke();
   int sx = 0;
   for (int k = 0; k < 8; k++) {
     boolean earned = k < 6 ? dayBeaten[k] : (k == 6 ? finalBeaten : recupUnlocked);
     if (!earned) continue;
-    fill(k == 7 ? color(90, 220, 110) : color(255, 215, 90));
+    viewGraphics().fill(k == 7 ? color(90, 220, 110) : color(255, 215, 90));
     drawStar(104 + sx * 46, 292, 18);
     sx++;
   }
 
-  textFont(fontUI);
-  textAlign(LEFT, CENTER);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textAlign(LEFT, CENTER);
   for (int i = 0; i < MENU_OPTS.length; i++) {
     boolean sel = i == menuSel;
     boolean locked = (i == 1 && !endlessUnlocked) || (i == 2 && !recupUnlocked);
-    textSize(34);
-    fill(locked ? (sel ? 150 : 70) : (sel ? 255 : 120));
+    viewGraphics().textSize(34);
+    viewGraphics().fill(locked ? (sel ? 150 : 70) : (sel ? 255 : 120));
     String label = (i == 2 && locked) ? "???" : MENU_OPTS[i];
     if (i == 4) label += "  (" + achCountVisible() + "/" + achTotalVisible() + ")";
-    text((sel ? ">> " : "    ") + label, 84, optY(i));
+    viewGraphics().text((sel ? ">> " : "    ") + label, 84, optY(i));
   }
 
   String[] desc = {
@@ -6112,35 +6379,36 @@ void drawMainMenu() {
     recupUnlocked ? "Todos eles. Nenhuma luz. Um certificado." : "Valide 36h/36h na POLIWEEK para desbloquear.",
     "Nerdolas, pichações, itens e estatísticas.",
     "Veja suas conquistas.",
+    "Tela cheia, tamanho da janela e redimensionamento livre.",
     "Fechar o jogo."
   };
-  textSize(17);
-  fill(170);
-  text(desc[menuSel], 88, optY(MENU_OPTS.length) + 4);
+  viewGraphics().textSize(17);
+  viewGraphics().fill(170);
+  viewGraphics().text(desc[menuSel], 88, optY(MENU_OPTS.length) + 4);
 
-  textSize(17);
-  fill(190);
+  viewGraphics().textSize(17);
+  viewGraphics().fill(190);
   String rec = "Horas acumuladas: " + hoursValidated() + "h/36h";
   if (endlessUnlocked) rec += "      Recorde ENDLESS: " + nf(best, 0, 1) + "s";
-  text(rec, 84, height - 95);
-  fill(140);
-  text("↑↓ escolher   ←→ trocar   Enter jogar   Esc sair", 84, height - 60);
+  viewGraphics().text(rec, 84, uiHeight() - 95);
+  viewGraphics().fill(140);
+  viewGraphics().text("↑↓ escolher   ←→ trocar   Enter jogar   F11 tela cheia   Esc sair", 84, uiHeight() - 60);
 }
 
 void drawAchievementsPage() {
-  textFont(fontBig);
-  textAlign(LEFT, BASELINE);
-  fill(235);
-  textSize(56);
-  text("CONQUISTAS", 60, 100);
-  textFont(fontUI);
-  textSize(22);
-  fill(255, 215, 90);
-  text(achCountVisible() + " / " + achTotalVisible(), 450, 98);
+  viewGraphics().textFont(fontBig);
+  viewGraphics().textAlign(LEFT, BASELINE);
+  viewGraphics().fill(235);
+  viewGraphics().textSize(56);
+  viewGraphics().text("CONQUISTAS", 60, 100);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textSize(22);
+  viewGraphics().fill(255, 215, 90);
+  viewGraphics().text(achCountVisible() + " / " + achTotalVisible(), 450, 98);
 
   ArrayList<Integer> list = new ArrayList<Integer>();
   for (int k = 0; k < ACH_NAME.length; k++) if (achVisible(k)) list.add(k);
-  rectMode(CORNER);
+  viewGraphics().rectMode(CORNER);
   int cols = 3;
   int perCol = max(1, (list.size() + cols - 1) / cols);
   float colW = 410, rowH = 68;
@@ -6149,66 +6417,66 @@ void drawAchievementsPage() {
     int col = n / perCol, row = n % perCol;
     float x = 50 + col * (colW + 12), y = 125 + row * rowH;
     boolean on = achUnlocked[k];
-    noStroke();
-    fill(255, on ? 26 : 10);
-    rect(x, y, colW, rowH - 6, 6);
+    viewGraphics().noStroke();
+    viewGraphics().fill(255, on ? 26 : 10);
+    viewGraphics().rect(x, y, colW, rowH - 6, 6);
     if (on) {
-      fill(255, 215, 90);
+      viewGraphics().fill(255, 215, 90);
       drawStar(x + 28, y + 31, 15);
     } else {
-      noFill();
-      stroke(120);
-      strokeWeight(2);
+      viewGraphics().noFill();
+      viewGraphics().stroke(120);
+      viewGraphics().strokeWeight(2);
       drawStar(x + 28, y + 31, 15);
-      noStroke();
+      viewGraphics().noStroke();
     }
-    textAlign(LEFT, TOP);
-    textSize(17);
-    fill(on ? 255 : 150);
-    text(ACH_NAME[k], x + 54, y + 7);
-    textSize(12);
-    fill(on ? 200 : 110);
-    text(ACH_DESC[k], x + 54, y + 30, colW - 64, 32);
-    textAlign(RIGHT, TOP);
-    textSize(10);
-    fill(ACH_MODE[k] == ENDLESS ? color(200, 160, 90) : color(110, 200, 130));
-    text(ACH_MODE[k] == ENDLESS ? "ENDLESS" : "POLIWEEK", x + colW - 8, y + 9);
+    viewGraphics().textAlign(LEFT, TOP);
+    viewGraphics().textSize(17);
+    viewGraphics().fill(on ? 255 : 150);
+    viewGraphics().text(ACH_NAME[k], x + 54, y + 7);
+    viewGraphics().textSize(12);
+    viewGraphics().fill(on ? 200 : 110);
+    viewGraphics().text(ACH_DESC[k], x + 54, y + 30, colW - 64, 32);
+    viewGraphics().textAlign(RIGHT, TOP);
+    viewGraphics().textSize(10);
+    viewGraphics().fill(ACH_MODE[k] == ENDLESS ? color(200, 160, 90) : color(110, 200, 130));
+    viewGraphics().text(ACH_MODE[k] == ENDLESS ? "ENDLESS" : "POLIWEEK", x + colW - 8, y + 9);
   }
-  textAlign(CENTER, CENTER);
-  textSize(18);
-  fill(170);
-  text("Esc, Enter ou clique para voltar", width / 2, height - 30);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textSize(18);
+  viewGraphics().fill(170);
+  viewGraphics().text("Esc, Enter ou clique para voltar", uiWidth() / 2, uiHeight() - 30);
 }
 
 // ---- CATÁLOGO
 float tabX(int k) { return 60 + k * 250; }
 
 void drawCatalogue() {
-  textFont(fontBig);
-  textAlign(LEFT, BASELINE);
-  fill(235);
-  textSize(56);
-  text("CATÁLOGO", 60, 100);
-  textFont(fontHud);
-  textSize(22);
-  textAlign(LEFT, CENTER);
+  viewGraphics().textFont(fontBig);
+  viewGraphics().textAlign(LEFT, BASELINE);
+  viewGraphics().fill(235);
+  viewGraphics().textSize(56);
+  viewGraphics().text("CATÁLOGO", 60, 100);
+  viewGraphics().textFont(fontHud);
+  viewGraphics().textSize(22);
+  viewGraphics().textAlign(LEFT, CENTER);
   for (int k = 0; k < CAT_TABS.length; k++) {
     boolean sel = k == catTab;
-    noStroke();
-    fill(sel ? color(170, 20, 15) : color(0, 160));
-    rect(tabX(k), 125, 235, 38);
-    fill(sel ? 255 : 150);
-    text(CAT_TABS[k], tabX(k) + 16, 144);
+    viewGraphics().noStroke();
+    viewGraphics().fill(sel ? color(170, 20, 15) : color(0, 160));
+    viewGraphics().rect(tabX(k), 125, 235, 38);
+    viewGraphics().fill(sel ? 255 : 150);
+    viewGraphics().text(CAT_TABS[k], tabX(k) + 16, 144);
   }
   if (catTab == 0) drawCatNerdolas();
   else if (catTab == 1) drawCatMsgs();
   else if (catTab == 2) drawCatItems();
   else drawCatStats();
-  textFont(fontUI);
-  textAlign(CENTER, CENTER);
-  textSize(16);
-  fill(160);
-  text("←→ trocar de aba    Esc voltar", width / 2, height - 30);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textAlign(CENTER, CENTER);
+  viewGraphics().textSize(16);
+  viewGraphics().fill(160);
+  viewGraphics().text("←→ trocar de aba    Esc voltar", uiWidth() / 2, uiHeight() - 30);
 }
 
 void drawCatNerdolas() {
@@ -6217,29 +6485,29 @@ void drawCatNerdolas() {
     boolean met = dayKnown(d), beat = dayBeaten[d];
     float x = 60 + (d % 3) * 420, y = 185 + (d / 3) * 330;
     hudSlab(x, y, 400, 310);
-    fill(beat ? color(170, 20, 15) : color(60));
-    rect(x, y, 7, 310);
-    imageMode(CORNER);
-    tint(met ? 230 : 18);
-    image(faces[ch], x + 22, y + 20, 130, 130);
-    noTint();
-    textFont(fontHud);
-    textAlign(LEFT, TOP);
-    textSize(26);
-    fill(met ? 240 : 90);
-    text(met ? NAMES[ch].toUpperCase() : "???", x + 170, y + 22);
-    textFont(fontUI);
-    textSize(16);
-    fill(met ? color(220, 70, 50) : color(80));
-    text(met ? NICKS[ch] : "???", x + 170, y + 58);
-    fill(140);
-    textSize(13);
-    text("DIA " + (d + 1) + (beat ? "   ·   ✓ " + dayCerts[d] * HOURS_PER_CERT + "h" : ""), x + 170, y + 86);
-    textFont(fontMail);
-    textSize(15);
-    fill(beat ? 225 : 110);
+    viewGraphics().fill(beat ? color(170, 20, 15) : color(60));
+    viewGraphics().rect(x, y, 7, 310);
+    viewGraphics().imageMode(CORNER);
+    viewGraphics().tint(met ? 230 : 18);
+    viewGraphics().image(faces[ch], x + 22, y + 20, 130, 130);
+    viewGraphics().noTint();
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textAlign(LEFT, TOP);
+    viewGraphics().textSize(26);
+    viewGraphics().fill(met ? 240 : 90);
+    viewGraphics().text(met ? NAMES[ch].toUpperCase() : "???", x + 170, y + 22);
+    viewGraphics().textFont(fontUI);
+    viewGraphics().textSize(16);
+    viewGraphics().fill(met ? color(220, 70, 50) : color(80));
+    viewGraphics().text(met ? NICKS[ch] : "???", x + 170, y + 58);
+    viewGraphics().fill(140);
+    viewGraphics().textSize(13);
+    viewGraphics().text("DIA " + (d + 1) + (beat ? "   ·   ✓ " + dayCerts[d] * HOURS_PER_CERT + "h" : ""), x + 170, y + 86);
+    viewGraphics().textFont(fontMail);
+    viewGraphics().textSize(15);
+    viewGraphics().fill(beat ? 225 : 110);
     String desc = beat ? TRAITS[ch] : (met ? "??? — vença o Dia " + (d + 1) + " da POLIWEEK para descobrir como ele age." : "???");
-    text(desc, x + 22, y + 165, 360, 135);
+    viewGraphics().text(desc, x + 22, y + 165, 360, 135);
   }
 }
 
@@ -6247,40 +6515,40 @@ void drawCatMsgs() {
   for (int k = 0; k < WALL_MSGS.length; k++) {
     float y = 190 + k * 120;
     hudSlab(60, y, 1240, 100);
-    fill(msgSeen[k] ? color(150, 15, 12) : color(60));
-    rect(60, y, 7, 100);
-    textAlign(LEFT, CENTER);
+    viewGraphics().fill(msgSeen[k] ? color(150, 15, 12) : color(60));
+    viewGraphics().rect(60, y, 7, 100);
+    viewGraphics().textAlign(LEFT, CENTER);
     if (msgSeen[k]) {
-      textFont(fontGraffiti);
-      textSize(34);
-      fill(170, 25, 20);
-      text(WALL_MSGS[k].replace('\n', ' '), 90, y + 50);
+      viewGraphics().textFont(fontGraffiti);
+      viewGraphics().textSize(34);
+      viewGraphics().fill(170, 25, 20);
+      viewGraphics().text(WALL_MSGS[k].replace('\n', ' '), 90, y + 50);
     } else {
-      textFont(fontHud);
-      textSize(30);
-      fill(80);
-      text("???  —  ainda não encontrada", 90, y + 50);
+      viewGraphics().textFont(fontHud);
+      viewGraphics().textSize(30);
+      viewGraphics().fill(80);
+      viewGraphics().text("???  —  ainda não encontrada", 90, y + 50);
     }
   }
 }
 
 void drawCatItems() {
-  imageMode(CORNER);
+  viewGraphics().imageMode(CORNER);
   for (int k = 0; k < ITEM_NAMES.length; k++) {
     float y = 175 + k * 96;
     hudSlab(60, y, 1240, 86);
-    tint(itemSeen[k] ? 255 : 25);
-    image(itemTex[k], 80, y + 7, 72, 72);
-    noTint();
-    textAlign(LEFT, TOP);
-    textFont(fontHud);
-    textSize(24);
-    fill(itemSeen[k] ? 240 : 90);
-    text(itemSeen[k] ? ITEM_NAMES[k].toUpperCase() : "???", 180, y + 12);
-    textFont(fontMail);
-    textSize(16);
-    fill(itemSeen[k] ? 200 : 100);
-    text(itemSeen[k] ? ITEM_DESC[k] + (k == TASER ? "   [R]" : k == LATA ? "   [G]" : "   [SLOT 1-5]") : "Pegue esse item para descobrir o que ele faz.", 180, y + 50);
+    viewGraphics().tint(itemSeen[k] ? 255 : 25);
+    viewGraphics().image(itemTex[k], 80, y + 7, 72, 72);
+    viewGraphics().noTint();
+    viewGraphics().textAlign(LEFT, TOP);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(24);
+    viewGraphics().fill(itemSeen[k] ? 240 : 90);
+    viewGraphics().text(itemSeen[k] ? ITEM_NAMES[k].toUpperCase() : "???", 180, y + 12);
+    viewGraphics().textFont(fontMail);
+    viewGraphics().textSize(16);
+    viewGraphics().fill(itemSeen[k] ? 200 : 100);
+    viewGraphics().text(itemSeen[k] ? ITEM_DESC[k] + (k == TASER ? "   [R]" : k == LATA ? "   [G]" : "   [SLOT 1-5]") : "Pegue esse item para descobrir o que ele faz.", 180, y + 50);
   }
 }
 
@@ -6303,17 +6571,17 @@ void drawCatStats() {
   for (int k = 0; k < labels.length; k++) {
     float x = 60 + (k % 2) * 630, y = 190 + (k / 2) * 92;
     hudSlab(x, y, 610, 84);
-    fill(170, 20, 15);
-    rect(x, y, 7, 84);
-    textAlign(LEFT, CENTER);
-    textFont(fontMono);
-    textSize(15);
-    fill(150);
-    text(labels[k].toUpperCase(), x + 24, y + 26);
-    textFont(fontHud);
-    textSize(32);
-    fill(235, 230, 215);
-    text(values[k], x + 24, y + 58);
+    viewGraphics().fill(170, 20, 15);
+    viewGraphics().rect(x, y, 7, 84);
+    viewGraphics().textAlign(LEFT, CENTER);
+    viewGraphics().textFont(fontMono);
+    viewGraphics().textSize(15);
+    viewGraphics().fill(150);
+    viewGraphics().text(labels[k].toUpperCase(), x + 24, y + 26);
+    viewGraphics().textFont(fontHud);
+    viewGraphics().textSize(32);
+    viewGraphics().fill(235, 230, 215);
+    viewGraphics().text(values[k], x + 24, y + 58);
   }
 }
 
@@ -6339,6 +6607,8 @@ void activateMenu(int i) {
     menuPageTo(2);
   } else if (i == 4) {
     menuPageTo(1);
+  } else if(i==5){
+    openVideoSettings();
   } else {
     exit();
   }
@@ -6361,7 +6631,7 @@ void pauseGame() {
   pauseStart = millis();
   pausePage = 0;
   pauseSel = 0;
-  pauseShot = get();
+  pauseShot = viewGraphics().get();
   releaseKeys();
   peekSide = 0;
   lockMouse(false);
@@ -6415,6 +6685,7 @@ void shiftClock(int d) {
 }
 
 void pauseAction(int i) {
+  if(pausePage==2){activateVideoSetting();return;}
   if (pausePage == 1) {
     if (i == VOL_NAMES.length) {
       saveSettings();
@@ -6428,12 +6699,14 @@ void pauseAction(int i) {
   } else if (i == 1) {
     pausePage = 1;
     pauseSel = 0;
-  } else if (i == 2) {
+  } else if(i==2){
+    openVideoSettings();
+  } else if (i == 3) {
     paused = false;
     saveSettings();
     endRun(false);
     startRun(gameMode, runEntry);
-  } else if (i == 3) {
+  } else if (i == 4) {
     paused = false;
     saveSettings();
     goMenu();
@@ -6441,6 +6714,7 @@ void pauseAction(int i) {
 }
 
 void pauseKey(int kc) {
+  if(pausePage==2){videoKey(kc);return;}
   int n = pausePage == 0 ? PAUSE_OPTS.length : VOL_NAMES.length + 1;
   if (kc == ESC || kc == BACKSPACE || (kc == 'P' && pausePage == 0)) {
     if (pausePage == 1) pauseAction(VOL_NAMES.length);
@@ -6463,16 +6737,17 @@ int pauseHovered() {
   int n = pausePage == 0 ? PAUSE_OPTS.length : VOL_NAMES.length + 1;
   float right = pausePage == 0 ? 560 : VOL_BAR_X + VOL_BAR_W + 100;
   for (int i = 0; i < n; i++)
-    if (mouseX > 60 && mouseX < right && abs(mouseY - pauseOptY(i)) < 26) return i;
+    if (uiMouseX() > 60 && uiMouseX() < right && abs(uiMouseY() - pauseOptY(i)) < 26) return i;
   return -1;
 }
 
 void pauseMouse(boolean click) {
+  if(pausePage==2){videoMouse(click);return;}
   int h = pauseHovered();
   if (h < 0) return;
   pauseSel = h;
-  if (pausePage == 1 && h < VOL_NAMES.length && mouseX >= VOL_BAR_X - 10 && mouseX <= VOL_BAR_X + VOL_BAR_W + 10) {
-    if (click || mousePressed) setVol(h, round(constrain((mouseX - VOL_BAR_X) / VOL_BAR_W, 0, 1) * 20) * 5);
+  if (pausePage == 1 && h < VOL_NAMES.length && uiMouseX() >= VOL_BAR_X - 10 && uiMouseX() <= VOL_BAR_X + VOL_BAR_W + 10) {
+    if (click || mousePressed) setVol(h, round(constrain((uiMouseX() - VOL_BAR_X) / VOL_BAR_W, 0, 1) * 20) * 5);
   } else if (click) {
     pauseAction(h);
   }
@@ -6481,62 +6756,66 @@ void pauseMouse(boolean click) {
 void drawPause() {
   if (pauseShot == null) {                    // freeze the last frame as the backdrop
     render();
-    pauseShot = get();
+    pauseShot = viewGraphics().get();
   }
-  background(0);
+  viewGraphics().background(0);
   begin2D();
-  imageMode(CORNER);
-  tint(110);
-  image(pauseShot, 0, 0, width, height);
-  noTint();
-  noStroke();
-  fill(0, 185);
-  rect(0, 0, width, height);
+  beginUi();
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().tint(110);
+  viewGraphics().image(pauseShot, 0, 0, uiWidth(), uiHeight());
+  viewGraphics().noTint();
+  viewGraphics().noStroke();
+  viewGraphics().fill(0, 185);
+  viewGraphics().rect(0, 0, uiWidth(), uiHeight());
 
-  textFont(fontBig);
-  textAlign(LEFT, BASELINE);
-  fill(235);
-  textSize(72);
-  text(pausePage == 0 ? "PAUSADO" : "SOM", 80, 170);
+  if(pausePage==2){drawVideoSettings();endUi();end2D();return;}
+  viewGraphics().textFont(fontBig);
+  viewGraphics().textAlign(LEFT, BASELINE);
+  viewGraphics().fill(235);
+  viewGraphics().textSize(72);
+  viewGraphics().text(pausePage == 0 ? "PAUSADO" : "SOM", 80, 170);
 
-  textFont(fontUI);
-  textAlign(LEFT, CENTER);
+  viewGraphics().textFont(fontUI);
+  viewGraphics().textAlign(LEFT, CENTER);
   if (pausePage == 0) {
     for (int i = 0; i < PAUSE_OPTS.length; i++) {
       boolean sel = i == pauseSel;
-      textSize(34);
-      fill(sel ? 255 : 120);
-      text((sel ? ">> " : "    ") + PAUSE_OPTS[i], 84, pauseOptY(i));
+      viewGraphics().textSize(34);
+      viewGraphics().fill(sel ? 255 : 120);
+      viewGraphics().text((sel ? ">> " : "    ") + PAUSE_OPTS[i], 84, pauseOptY(i));
     }
     String[] desc = {"Voltar para os Backrooms.", "Volume geral, ambiente, efeitos e vozes.",
+      "Tela cheia, tamanho da janela e redimensionamento livre.",
       "Começar esta partida de novo.", "Abandonar a partida."};
-    textSize(17);
-    fill(170);
-    text(desc[pauseSel], 88, pauseOptY(PAUSE_OPTS.length) + 4);
+    viewGraphics().textSize(17);
+    viewGraphics().fill(170);
+    viewGraphics().text(desc[pauseSel], 88, pauseOptY(PAUSE_OPTS.length) + 4);
   } else {
     for (int i = 0; i <= VOL_NAMES.length; i++) {
       boolean sel = i == pauseSel;
       float y = pauseOptY(i);
-      textSize(34);
-      fill(sel ? 255 : 120);
-      text((sel ? ">> " : "    ") + (i < VOL_NAMES.length ? VOL_NAMES[i] : "VOLTAR"), 84, y);
+      viewGraphics().textSize(34);
+      viewGraphics().fill(sel ? 255 : 120);
+      viewGraphics().text((sel ? ">> " : "    ") + (i < VOL_NAMES.length ? VOL_NAMES[i] : "VOLTAR"), 84, y);
       if (i == VOL_NAMES.length) continue;
       float v = vol[i] / 100.0;
-      fill(255, 30);
-      rect(VOL_BAR_X, y - 5, VOL_BAR_W, 10);
-      fill(sel ? color(225, 215, 180) : color(150, 145, 125));
-      rect(VOL_BAR_X, y - 5, VOL_BAR_W * v, 10);
-      rect(VOL_BAR_X + VOL_BAR_W * v - 5, y - 14, 10, 28);
-      textSize(22);
-      fill(sel ? 235 : 140);
-      text(vol[i] + "%", VOL_BAR_X + VOL_BAR_W + 26, y);
+      viewGraphics().fill(255, 30);
+      viewGraphics().rect(VOL_BAR_X, y - 5, VOL_BAR_W, 10);
+      viewGraphics().fill(sel ? color(225, 215, 180) : color(150, 145, 125));
+      viewGraphics().rect(VOL_BAR_X, y - 5, VOL_BAR_W * v, 10);
+      viewGraphics().rect(VOL_BAR_X + VOL_BAR_W * v - 5, y - 14, 10, 28);
+      viewGraphics().textSize(22);
+      viewGraphics().fill(sel ? 235 : 140);
+      viewGraphics().text(vol[i] + "%", VOL_BAR_X + VOL_BAR_W + 26, y);
     }
   }
 
-  textSize(17);
-  fill(140);
-  text(pausePage == 0 ? "↑↓ escolher   Enter confirmar   Esc continuar"
-    : "↑↓ escolher   ←→ ajustar (ou arraste)   Esc voltar", 84, height - 60);
+  viewGraphics().textSize(17);
+  viewGraphics().fill(140);
+  viewGraphics().text(pausePage == 0 ? "↑↓ escolher   Enter confirmar   Esc continuar"
+    : "↑↓ escolher   ←→ ajustar (ou arraste)   Esc voltar", 84, uiHeight() - 60);
+  endUi();
   end2D();
 }
 
@@ -6574,14 +6853,18 @@ void loadSettings() {
   if (!new File(sketchPath("settings.txt")).exists()) return;
   for (String line : loadStrings("settings.txt")) {
     String[] kv = split(line.trim(), '=');
-    if (kv.length < 2 || !kv[0].equals("vol")) continue;
+    if(kv.length<2)continue;
+    if(kv[0].equals("displayMode")){displayModePref=constrain(int(kv[1]),0,2);videoStartupPending=true;continue;}
+    if(kv[0].equals("windowW")){windowedW=constrain(int(kv[1]),640,7680);continue;}
+    if(kv[0].equals("windowH")){windowedH=constrain(int(kv[1]),360,4320);continue;}
+    if(!kv[0].equals("vol"))continue;
     String[] p = split(kv[1], ',');
     for (int k = 0; k < min(p.length, vol.length); k++) vol[k] = constrain(int(p[k].trim()), 0, 100);
   }
 }
 
 void saveSettings() {
-  saveStrings(sketchPath("settings.txt"), new String[]{"vol=" + join(nf(vol, 0), ",")});
+  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH});
 }
 
 // =====================================================================
@@ -6596,15 +6879,18 @@ void lockMouse(boolean on) {
 }
 
 void mouseMoved() {
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen){visualDebugMouse(false,false);return;}
   if (state == MENU && menuPage == 0) {
     int h = hoveredOption();
     if (h >= 0) menuSelect(h);
   }
   if (state == PLAYING && paused) pauseMouse(false);
+  if(state==MENU && menuPage==3)videoMouse(false);
   look();
 }
 
 void mouseDragged() {
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen){visualDebugMouse(false,true);return;}
   if (state == PLAYING && paused) pauseMouse(false);
   look();
 }
@@ -6623,14 +6909,16 @@ void look() {
 }
 
 void mousePressed() {
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen){visualDebugMouse(true,false);return;}
   if (state == MENU) {
+    if(menuPage==3){videoMouse(true);return;}
     if (menuPage == 1) {
       menuPageTo(0);
       return;
     }
     if (menuPage == 2) {
       for (int k = 0; k < CAT_TABS.length; k++) {
-        if (mouseX > tabX(k) && mouseX < tabX(k) + 235 && mouseY > 125 && mouseY < 163 && k != catTab) {
+        if (uiMouseX() > tabX(k) && uiMouseX() < tabX(k) + 235 && uiMouseY() > 125 && uiMouseY() < 163 && k != catTab) {
           catTab = k;
           pageStatic();
         }
@@ -6647,7 +6935,7 @@ void mousePressed() {
     int n = chars.length, sel = lineSel();
     for (int i = 0; i < n; i++) {
       float p = i + lineShift, s = lineS(p);
-      if (abs(mouseX - lineX(p)) < s / 2 && abs(mouseY - lineY(p)) < s / 2) {
+      if (abs(uiMouseX() - lineX(p)) < s / 2 && abs(uiMouseY() - lineY(p)) < s / 2) {
         if (i > 0) {
           setLineSel((sel + i) % n);
           lineShift += i;
@@ -6663,7 +6951,32 @@ void mousePressed() {
   }
 }
 
+// Function keys can bypass keyPressed() on the NEWT-backed P3D surface.
+void keyEvent(processing.event.KeyEvent event) {
+  if (!ENABLE_VISUAL_DEBUG) return;
+  int code = event.getKeyCode();
+  if (code != java.awt.event.KeyEvent.VK_F9 && code != java.awt.event.KeyEvent.VK_F10) return;
+  if (event.getAction() == processing.event.KeyEvent.PRESS) {
+    if (!visualDebugKeyHeld) {
+      visualDebugKeyHeld = true;
+      toggleVisualDebug();
+    }
+  } else if (event.getAction() == processing.event.KeyEvent.RELEASE) {
+    visualDebugKeyHeld = false;
+  }
+}
+
 void keyPressed() {
+  if(ENABLE_VISUAL_DEBUG && (keyCode==java.awt.event.KeyEvent.VK_F10 || keyCode==java.awt.event.KeyEvent.VK_F9)){
+    if(!visualDebugKeyHeld){visualDebugKeyHeld=true;toggleVisualDebug();}return;
+  }
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen && keyCode!=java.awt.event.KeyEvent.VK_F11){
+    int code=key==ESC?ESC:keyCode;if(key==ESC)key=0;visualDebugKey(code);return;
+  }
+  if(keyCode==java.awt.event.KeyEvent.VK_F11) {
+    if(!fullscreenKeyHeld){fullscreenKeyHeld=true;toggleDisplayMode();}
+    return;
+  }
   if (key == ESC) {
     key = 0;
     if (state == MENU) {
@@ -6725,6 +7038,7 @@ void keyPressed() {
 }
 
 void menuKey(int kc) {
+  if(menuPage==3){videoKey(kc);return;}
   boolean enter = kc == ENTER || kc == RETURN || kc == ' ';
   if (menuPage == 1) {
     if (enter || kc == BACKSPACE) menuPageTo(0);
@@ -6757,6 +7071,10 @@ void menuKey(int kc) {
 }
 
 void keyReleased() {
+  if(ENABLE_VISUAL_DEBUG && (keyCode==java.awt.event.KeyEvent.VK_F10 || keyCode==java.awt.event.KeyEvent.VK_F9)){visualDebugKeyHeld=false;return;}
+  if(keyCode==java.awt.event.KeyEvent.VK_F11){fullscreenKeyHeld=false;return;}
+  if(ENABLE_VISUAL_DEBUG && visualDebugOpen){if(keyCode=='B'){visualDebugBaseline=false;codecForceI=true;}return;}
+
   int kc = keyCode;
   if (kc >= 0 && kc < keyDown.length) keyDown[kc] = false;
   setMove(kc, false);
@@ -6794,7 +7112,7 @@ void update3DAudio(float dt) {
   updateEnemySteps(dt);
   updateDistant(dt);
   updateEcho(dt);
-  if (ambience.hasControl(Controller.GAIN)) ambience.setGain(volDb(V_AMB) - 10 * chaseLvl);   // the room ducks during a chase
+  if (ambience.hasControl(Controller.GAIN)) ambience.setGain(volDb(V_AMB) - 10 * chaseLvl - windDuckDb());   // the room ducks during a chase and under mic wind
 }
 
 
@@ -6853,10 +7171,16 @@ void updateEnemySteps(float dt) {
 
 
 void updateDistant(float dt) {
+  if (!DISTANT_SOUNDS) {
+    distType = -1;
+    distO.setAmplitude(0);
+    distNAmp.setValue(0);
+    return;
+  }
   if (distType < 0) {
     if (chaseLvl < 0.3) nextDistant -= dt;
     if (nextDistant > 0) return;
-    distType = (int) random(2);
+    distType = (int) random(3);
     distT = 0;
     distVol = random(0.5, 1);
     distPan.setPan(random(-0.95, 0.95));
@@ -6871,6 +7195,12 @@ void updateDistant(float dt) {
     na = 0.5 * exp(-distT * 10);
     cut = 280;
     end = 1.2;
+  } else if (distType == 1) {      // a pipe clanking and ringing
+    f = 380 + 15 * sin(distT * 40);
+    oa = 0.07 * exp(-distT * 2.2);
+    na = 0.2 * exp(-distT * 30);
+    cut = 1500;
+    end = 2.2;
   } else {                         // someone running, somewhere
     float ph = (distT / 0.17) % 1;
     na = 0.45 * exp(-ph * 22) * sin(PI * min(1, distT / 2.2));
@@ -7080,15 +7410,15 @@ void drawEyes(float cx, float cy) {
   if (crouching) sub = "AGACHADO";
   if (millis() < ghostUntil) sub = sub.length() > 0 ? sub + " / INVISÍVEL" : "INVISÍVEL";
   if (sub.length() > 0) {
-    textFont(fontMono);
-    textSize(12);
-    float tw = textWidth(sub), lb = cy + lowest + 14;
-    noStroke();
-    fill(0, 170);
-    rect(cx - tw / 2 - 8, lb, tw + 16, 20);
-    fill(220);
-    textAlign(CENTER, CENTER);
-    text(sub, cx, lb + 9);
+    viewGraphics().textFont(fontMono);
+    viewGraphics().textSize(12);
+    float tw = viewGraphics().textWidth(sub), lb = cy + lowest + 14;
+    viewGraphics().noStroke();
+    viewGraphics().fill(0, 170);
+    viewGraphics().rect(cx - tw / 2 - 8, lb, tw + 16, 20);
+    viewGraphics().fill(220);
+    viewGraphics().textAlign(CENTER, CENTER);
+    viewGraphics().text(sub, cx, lb + 9);
   }
 }
 
@@ -7156,66 +7486,66 @@ void renderEye(Eye ey, int mode, float cx, float cy, float sc, boolean alive) {
   }
 
   float w = 112 * sc, h = 30 * sc;
-  pushMatrix();
-  translate(cx + (ox + random(-shake, shake)) * sc, cy + (oy + random(-shake, shake)) * sc);
-  rotate(rot);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(cx + (ox + random(-shake, shake)) * sc, cy + (oy + random(-shake, shake)) * sc);
+  viewGraphics().rotate(rot);
   float op = ey.opening * h;
   if (op > 1.5) {
-    noStroke();
-    fill(hunting ? color(225, 200, 185) : color(200, 195, 180));
+    viewGraphics().noStroke();
+    viewGraphics().fill(hunting ? color(225, 200, 185) : color(200, 195, 180));
     eyeShape(w, op);
     if (veins) {
-      stroke(150, 15, 15, 200);
-      strokeWeight(1.4 * sc);
+      viewGraphics().stroke(150, 15, 15, 200);
+      viewGraphics().strokeWeight(1.4 * sc);
       for (int k = 0; k < 6; k++) {
         float side = k < 3 ? -1 : 1;
         float x0 = side * w * 0.46, y0 = (k % 3 - 1) * op * 0.25;
         float x1 = side * w * 0.2, y1 = y0 * 0.4 + (noise(k + ey.seed, now * 0.001) - 0.5) * 6 * sc;
         float mx = (x0 + x1) / 2, my = (y0 + y1) / 2 + (k % 2 == 0 ? 3 : -3) * sc;
-        line(x0, y0, mx, my);
-        line(mx, my, x1, y1);
+        viewGraphics().line(x0, y0, mx, my);
+        viewGraphics().line(mx, my, x1, y1);
       }
-      noStroke();
+      viewGraphics().noStroke();
     }
     float r = h * 0.72;
     float ix = ey.lx * w * 0.15, iy = ey.ly * op * 0.3;
     float ih = min(r * 2, op * 1.7);
-    fill(iris);
-    ellipse(ix, iy, r * 2, ih);
+    viewGraphics().fill(iris);
+    viewGraphics().ellipse(ix, iy, r * 2, ih);
     float pr = hunting ? r * (0.35 + 0.15 * abs(sin(now * 0.02))) : r * 0.75;
-    fill(5);
-    ellipse(ix, iy, pr, min(pr, ih * 0.9));
-    fill(240, 200);
-    rect(ix + r * 0.25, iy - ih * 0.3, 4 * sc, 4 * sc);
-    noFill();
-    stroke(8);
-    strokeWeight(5 * sc);
+    viewGraphics().fill(5);
+    viewGraphics().ellipse(ix, iy, pr, min(pr, ih * 0.9));
+    viewGraphics().fill(240, 200);
+    viewGraphics().rect(ix + r * 0.25, iy - ih * 0.3, 4 * sc, 4 * sc);
+    viewGraphics().noFill();
+    viewGraphics().stroke(8);
+    viewGraphics().strokeWeight(5 * sc);
     eyeShape(w, op);
-    strokeWeight(3 * sc);
+    viewGraphics().strokeWeight(3 * sc);
     for (int k = 0; k < 7; k++) {
       float t = (k + 1) / 8.0;
       float x = lerp(-w / 2, w / 2, t);
       float y = -3.9 * op * t * (1 - t);
-      line(x, y, x * 1.08, y - 9 * sc);
+      viewGraphics().line(x, y, x * 1.08, y - 9 * sc);
     }
-    noStroke();
+    viewGraphics().noStroke();
   } else {
-    noFill();
+    viewGraphics().noFill();
     for (int pass = 0; pass < 2; pass++) {
-      stroke(pass == 0 ? color(10, 200) : color(215, 205, 185));
-      strokeWeight((pass == 0 ? 9 : 4) * sc);
-      bezier(-w / 2, 0, -w / 4, 10 * sc, w / 4, 10 * sc, w / 2, 0);
-      strokeWeight((pass == 0 ? 6 : 2.5) * sc);
+      viewGraphics().stroke(pass == 0 ? color(10, 200) : color(215, 205, 185));
+      viewGraphics().strokeWeight((pass == 0 ? 9 : 4) * sc);
+      viewGraphics().bezier(-w / 2, 0, -w / 4, 10 * sc, w / 4, 10 * sc, w / 2, 0);
+      viewGraphics().strokeWeight((pass == 0 ? 6 : 2.5) * sc);
       for (int k = 0; k < 7; k++) {
         float t = (k + 1) / 8.0;
         float x = lerp(-w / 2, w / 2, t);
         float y = h * t * (1 - t);
-        line(x, y, x * 1.05, y + 9 * sc);
+        viewGraphics().line(x, y, x * 1.05, y + 9 * sc);
       }
     }
-    noStroke();
+    viewGraphics().noStroke();
   }
-  popMatrix();
+  viewGraphics().popMatrix();
 }
 
 
@@ -7223,21 +7553,21 @@ void drawVsCard(float x, float y, float sz, float bright, float alpha, boolean f
   int now = millis();
   float t = now / 1000.0, b = bright / 255.0;
   boolean tw = now < twitchUntil[6];
-  pushMatrix();
-  translate(x, y);
+  viewGraphics().pushMatrix();
+  viewGraphics().translate(x, y);
   if (tw) {
-    translate(twDx[6] * 0.6, twDy[6] * 0.6);
-    rotate(twRot[6] * 0.25);
+    viewGraphics().translate(twDx[6] * 0.6, twDy[6] * 0.6);
+    viewGraphics().rotate(twRot[6] * 0.25);
   }
-  rectMode(CENTER);
-  imageMode(CENTER);
-  noStroke();
+  viewGraphics().rectMode(CENTER);
+  viewGraphics().imageMode(CENTER);
+  viewGraphics().noStroke();
 
   // red heartbeat glow
   float beat = pow(abs(sin(t * PI * 0.9)), 6);
   for (int r = 9; r > 0; r--) {
-    fill(150 * b, 8, 6, alpha * (0.035 + 0.03 * beat) * (front ? 1 : 0.6));
-    ellipse(0, 0, sz * 0.13 * r, sz * 0.13 * r);
+    viewGraphics().fill(150 * b, 8, 6, alpha * (0.035 + 0.03 * beat) * (front ? 1 : 0.6));
+    viewGraphics().ellipse(0, 0, sz * 0.13 * r, sz * 0.13 * r);
   }
 
   // the six, as photos orbiting slowly
@@ -7246,23 +7576,23 @@ void drawVsCard(float x, float y, float sz, float bright, float alpha, boolean f
     float a = -HALF_PI + k * TWO_PI / 6 + spin;
     float lit = 0.45 + 0.55 * noise(k * 3.7, t * 0.7);
     boolean gl = tw && twType[6] == k % 4;
-    pushMatrix();
-    translate(cos(a) * R + (gl ? random(-7, 7) : 0), sin(a) * R);
-    rotate(sin(t * 0.8 + k * 1.1) * 0.06);
-    fill(0, alpha * 0.85);
-    rect(4, 5, f + 10, f + 10);
-    fill(200 * b * lit, 190 * b * lit, 170 * b * lit, alpha);
-    rect(0, 0, f + 8, f + 8);
-    if (gl) tint(bright * lit, bright * lit * 0.25, bright * lit * 0.25, alpha);
-    else tint(bright * lit, alpha);
-    image(faces[k], 0, 0, f, f);
-    noTint();
-    popMatrix();
+    viewGraphics().pushMatrix();
+    viewGraphics().translate(cos(a) * R + (gl ? random(-7, 7) : 0), sin(a) * R);
+    viewGraphics().rotate(sin(t * 0.8 + k * 1.1) * 0.06);
+    viewGraphics().fill(0, alpha * 0.85);
+    viewGraphics().rect(4, 5, f + 10, f + 10);
+    viewGraphics().fill(200 * b * lit, 190 * b * lit, 170 * b * lit, alpha);
+    viewGraphics().rect(0, 0, f + 8, f + 8);
+    if (gl) viewGraphics().tint(bright * lit, bright * lit * 0.25, bright * lit * 0.25, alpha);
+    else viewGraphics().tint(bright * lit, alpha);
+    viewGraphics().image(faces[k], 0, 0, f, f);
+    viewGraphics().noTint();
+    viewGraphics().popMatrix();
   }
 
-  rectMode(CORNER);
-  imageMode(CORNER);
-  popMatrix();
+  viewGraphics().rectMode(CORNER);
+  viewGraphics().imageMode(CORNER);
+  viewGraphics().popMatrix();
 }
 
 void shiftEyeClock(Eye e, int d) {
@@ -7415,6 +7745,7 @@ boolean secretEdge(int i, int j, int ni, int nj) {
 }
 
 void rebuildWallVoxels() {
+  shadowListsDirty=true;
   int n = GRID * WALL_SUBDIV;
   wallVoxels = new boolean[n][n];
   float h = WALL_THICKNESS / 2;
@@ -7672,7 +8003,7 @@ String[] TAPE_FRAG = {
 };
 
 void applyTape() {
-  applyTapeTo(g);
+  applyTapeTo(viewGraphics());
 }
 
 // Surface radiosity: cosine-weighted hemisphere transport between the actual
@@ -7806,8 +8137,7 @@ void bakePatchDirect(LightPatch s) {
       if (lampType[i][j]==2) continue;
       float lx=(i+0.5)*CELL, ly=(j+0.5)*CELL;
       if (!lineOfSight(s.x,s.y,lx,ly)) continue;
-      float pd=dist(0,0,max(abs(s.x-lx)-CELL/12,0),max(abs(s.y-ly)-CELL/12,0));
-      total+=(lampType[i][j]==1?0.7:1)*fixturePower(i,j)*0.9*exp(-pd/60);
+      total+=(lampType[i][j]==1?0.7:1)*fixturePower(i,j)*ceilingSpill(s.x-lx,s.y-ly);
     }
   } else for (int i=max(1,ci-1);i<=min(GRID-2,ci+1);i++) for (int j=max(1,cj-1);j<=min(GRID-2,cj+1);j++) {
     if (lampType[i][j]==2) continue;
@@ -7881,24 +8211,29 @@ float fixturePower(int i, int j) {
   return (seed & 7) < 3 ? 1.0 : 0.38;
 }
 
-// Keep the recording signal at tape resolution; gameplay HUD is drawn afterwards.
+// The modern profile keeps the recording signal at the render target resolution.
+// LOW_RES_RECORDING restores a deliberately low-resolution recording path.
 PGraphics tapeFrame;
 PImage tapeSource, tapeOutput;
-final int TAPE_LINES = 480;
+int recordingHeight(PGraphics target) {
+  int requested = LOW_RES_RECORDING ? LOW_RES_LINES : target.height;
+  return max(16, min(requested, target.height) / 16 * 16);
+}
 
 // Processing OpenGL cache bridge: version-sensitive. Recheck this and meterCamera
 // when upgrading Processing; the bridge avoids a full-frame CPU readback.
 void applyTapeTo(PGraphics target) {
-  int h = min(TAPE_LINES, target.height), w = max(1, round(target.width * h / float(target.height)));
+  if(visualValue("tape",1)<.5)return;
+  int h = recordingHeight(target), w = max(16, round(target.width * h / float(target.height)) / 16 * 16);
   if (tapeFrame == null || tapeFrame.width != w || tapeFrame.height != h) {
     if (tapeFrame != null) tapeFrame.dispose();
     tapeFrame = createGraphics(w, h, P2D);
     tapeFrame.smooth(2);
   }
-  tape.set("lumaBlur", 0.85);
-  tape.set("chromaBlur", 3.2);
+  tape.set("lumaBlur",visualValue("luma",.28));
+  tape.set("chromaBlur",visualValue("chroma",3.2));
   tape.set("chromaShift", 1.0);
-  tape.set("sharpen", 0.28);
+  tape.set("sharpen", 0.38);
   tape.set("sat", 1.0);
   // Resolve the active source before changing framebuffers. A plain cached image
   // prevents Processing from trying to copy the new framebuffer as the source.
@@ -8115,7 +8450,1130 @@ float exposureFromMeter(int[] pixels) {
     sum+=constrain(values[y*8+x],lo,hi)*w; weights+=w;
   }
   float sceneLuma=pow(2,sum/weights);
-  // A bounded camcorder gain preserves dark rooms instead of normalizing them
-  // to daylight. Real meter input makes looking into a bright bay matter.
-  return constrain(0.23/max(sceneLuma,0.01),0.72,1.65);
+  meterLuma=sceneLuma;
+  return constrain(AE_TARGET*pow(2,AE_EV_COMP)/max(sceneLuma,0.0001),aeMin(),aeMax());
+}
+
+// =====================================================================
+// CAMCORDER: lens geometry, mechanical iris, AGC, shutter and white balance.
+float irisN = LENS_F_REF, gainDb = 0, gainDbApplied = 0, sensorGain = 1, meterLuma = 0.2;
+float lensFovNow = radians(BASE_FOV), shotYaw, shotPitch, camOmega;
+PVector shutterVec = new PVector(), wbGains;
+float wbFor = -1;
+
+float log2(float x) { return log(max(x, 0.000001)) / log(2); }
+float lensScale() { return 2 * tan(lensFovNow / 2); }
+float focalLengthMm() { return SENSOR_H_MM / max(lensScale(), 0.0001); }
+float lensD(float cx, float cy) {
+  float asp = viewWidth() / (float)viewHeight(), q = lensScale();
+  float r2 = (sq(cx * asp) + sq(cy)) * q * q;
+  return 1 + visualLensDistortion()*(LENS_K1 * r2 + LENS_K2 * r2 * r2);
+}
+float lensEdge() { return lensD(0.5, 0.5); }
+float aeMin() { return sq(LENS_F_REF / LENS_F_MAX); }
+float aeMax() { return sq(LENS_F_REF / LENS_F_MIN) * pow(10, AGC_MAX_DB / 20); }
+
+void updateAutoExposure(float dt) {
+  dt = max(0, dt);
+  float want = constrain(cameraExposureTarget, aeMin(), aeMax());
+  float wantN = constrain(LENS_F_REF / sqrt(want), LENS_F_MIN, LENS_F_MAX);
+  float stops = 2 * log2(wantN / irisN), step = IRIS_SPEED * dt;
+  irisN *= pow(2, constrain(stops * (1 - exp(-dt * IRIS_EASE)), -step, step) / 2);
+  irisN = constrain(irisN, LENS_F_MIN, LENS_F_MAX);
+  float wantDb = irisN > LENS_F_MIN * 1.04 ? 0
+    : constrain(20 * (float)Math.log10(max(want * sq(irisN / LENS_F_REF), 0.0001)), 0, AGC_MAX_DB);
+  float rate = (wantDb > gainDb ? AGC_UP_DB : AGC_DOWN_DB) * dt;
+  gainDb += constrain(wantDb - gainDb, -rate, rate);
+  gainDbApplied = AGC_STEP_DB > 0 ? round(gainDb / AGC_STEP_DB) * AGC_STEP_DB : gainDb;
+  gainDbApplied = constrain(gainDbApplied, 0, AGC_MAX_DB);
+  sensorGain = pow(10, gainDbApplied / 20);
+  exposureAdapt = sq(LENS_F_REF / irisN) * sensorGain;
+}
+
+void updateShutter() {
+  float dt = max(frameDt, 1 / 240.0);
+  // Wrapped angular difference avoids a false huge blur at +/- PI.
+  float wy = angleDiff(shotYaw, yaw) / dt, wp = (pitch - shotPitch) / dt;
+  shotYaw = yaw; shotPitch = pitch;
+  float s = max(lensScale(), 0.0001), asp = viewWidth() / (float)viewHeight();
+  shutterVec.set(constrain(wy * CAM_SHUTTER / (s * asp), -0.05, 0.05),
+    constrain(wp * CAM_SHUTTER / s, -0.05, 0.05));
+  camOmega = lerp(camOmega, sqrt(wy * wy + wp * wp), 1 - exp(-dt * 6));
+}
+
+void resetCamera() {
+  irisN = LENS_F_REF;
+  gainDb = gainDbApplied = 0;
+  sensorGain = exposureAdapt = 1;
+  meterLuma = 0.2;
+  shotYaw = yaw; shotPitch = pitch;
+  lensFovNow = radians(BASE_FOV);
+  camOmega = 0; shutterVec.set(0, 0);
+  codecForceI = true; codecMotion = 0;
+  codecLastFrame = codecLastI = -1;
+}
+
+PVector whiteBalance() {
+  if (wbFor != CAM_WB_KELVIN) {
+    PVector ref = kelvinLinear(6500), setting = kelvinLinear(CAM_WB_KELVIN);
+    wbGains = new PVector(ref.x / setting.x, ref.y / setting.y, ref.z / setting.z);
+    wbGains.div(wbGains.y); wbFor = CAM_WB_KELVIN;
+  }
+  return wbGains;
+}
+PVector kelvinLinear(float kelvin) {
+  float t = constrain(kelvin, 1000, 40000) / 100, r, g, b;
+  if (t <= 66) {
+    r = 255; g = 99.4708025861 * log(t) - 161.1195681661;
+    b = t <= 19 ? 1 : 138.5177312231 * log(t - 10) - 305.0447927307;
+  } else {
+    r = 329.698727446 * pow(t - 60, -0.1332047592);
+    g = 288.1221695283 * pow(t - 60, -0.0755148492); b = 255;
+  }
+  return new PVector(pow(constrain(r, 1, 255) / 255, 2.2),
+    pow(constrain(g, 1, 255) / 255, 2.2), pow(constrain(b, 1, 255) / 255, 2.2));
+}
+
+void applyLens() { applyLensTo(viewGraphics()); }
+void applyLensTo(PGraphics target) {
+  if(visualValue("lens",1)<.5)return;
+  float asp = target.width / (float)target.height, N = irisN;
+  float pitchMm = SENSOR_H_MM / SENSOR_LINES;
+  float sigDiff = 0.45 * 0.00055 * N;
+  float sigAb = LENS_ABERRATION_UM * 0.001 * pow(LENS_F_MIN / N, 3);
+  float sigOlpf = OLPF_PX * pitchMm;
+  float sigma = sqrt(sq(sigDiff) + sq(sigAb) + sq(sigOlpf));
+  float signal = 1 - exp(-meterLuma * EXPOSURE_BASE * exposureAdapt * 1.6);
+  PVector w = whiteBalance();
+  lens.set("time", millis() / 1000.0);
+  lens.set("aspect", asp);
+  lens.set("k1", LENS_K1*visualValue("distortion",1)); lens.set("k2", LENS_K2*visualValue("distortion",1));
+  lens.set("fovScale", lensScale());
+  // Equivalent lens geometry for this framebuffer's aspect ratio.
+  float cornerR2 = 0.25 * (asp * asp + 1) * sq(lensScale());
+  lens.set("edge", 1 + visualValue("distortion",1)*(LENS_K1 * cornerR2 + LENS_K2 * cornerR2 * cornerR2));
+  lens.set("lateralCA", LENS_LATERAL_CA);
+  lens.set("blurPx", sigma / SENSOR_H_MM * target.height * visualValue("blur",1));
+  lens.set("fieldSoft", LENS_FIELD_SOFT);
+  lens.set("motion", shutterVec.x*visualValue("motion",1), shutterVec.y*visualValue("motion",1));
+  lens.set("vigNatural", LENS_VIG_NATURAL);
+  lens.set("vigMech", LENS_VIG_MECH * constrain(1 - log2(N / LENS_F_MIN) / 2, 0, 1));
+  lens.set("glare", LENS_GLARE * signal * visualValue("glare",1)); lens.set("ghost", LENS_GHOSTS * visualValue("ghosts",1)); lens.set("smear", CCD_SMEAR * visualValue("smear",1));
+  lens.set("gain", sensorGain); lens.set("fullWell",visualValue("ccdNoise",1)<=0?1e20:SENSOR_FULL_WELL/max(visualValue("ccdNoise",1),.001)); lens.set("readNoise", SENSOR_READ_NOISE * visualValue("ccdNoise",1));
+  lens.set("hotRate", HOT_PIXELS * visualValue("ccdNoise",1)); lens.set("sensorRes", SENSOR_LINES * asp, (float)SENSOR_LINES);
+  lens.set("wb", w.x, w.y, w.z);
+  lens.set("detail", CAM_DETAIL * visualValue("detail",1)); lens.set("coring", CAM_DETAIL_CORING);
+  lens.set("detailPx", CAM_DETAIL_RADIUS * target.height / (float)SENSOR_LINES);
+  lens.set("knee", CAM_KNEE); lens.set("kneeSlope", CAM_KNEE_SLOPE);
+  lens.set("whiteClip", CAM_WHITE_CLIP); lens.set("pedestal", CAM_PEDESTAL);
+  target.filter(lens);
+}
+
+PVector lensWarp(float x, float y) {
+  // Invert the monotonic radial polynomial with a bounded Newton solve. Fixed-point
+  // iteration oscillates at wide-angle corners with the new fourth-order term.
+  float asp = viewWidth() / (float)viewHeight(), sx = x / viewWidth() - 0.5, sy = y / viewHeight() - 0.5;
+  float rd = sqrt(sq(sx * asp) + sq(sy));
+  if (rd < 0.000001) return new PVector(viewWidth() * 0.5, viewHeight() * 0.5);
+  float q = lensScale(), r = rd, edge = lensEdge();
+  for (int k = 0; k < 8; k++) {
+    float r2 = r * r * q * q;
+    float val = r * (1 + visualLensDistortion()*(LENS_K1 * r2 + LENS_K2 * r2 * r2)) - rd * edge;
+    float deriv = 1 + visualLensDistortion()*(3 * LENS_K1 * r2 + 5 * LENS_K2 * r2 * r2);
+    r = max(0, r - val / max(deriv, 0.0001));
+  }
+  return new PVector((sx * r / rd + 0.5) * viewWidth(), (sy * r / rd + 0.5) * viewHeight());
+}
+
+void applyPost(float dg, float hit) { applyPostTo(viewGraphics(), dg, hit); }
+void applyPostTo(PGraphics target, float dg, float hit) {
+  if(visualValue("post",1)<.5)return;dg=visualDanger(dg);hit=visualValue("hit",hit);
+  boolean footage = state == PLAYING || (ENABLE_VISUAL_DEBUG && visualDebugOpen);
+  post.set("time", millis() / 1000.0); post.set("danger", dg); post.set("hit", hit);
+  post.set("gain", footage ? 0.0 : 0.3);
+  post.set("tapeNoise", footage ? visualValue("tapeNoise",TAPE_NOISE) : 0.012);
+  post.set("vhs", visualDebugOpen?visualValue("vhs",VHS_AMOUNT):(state == MENU ? max(VHS_AMOUNT, 0.6) : VHS_AMOUNT));
+  post.set("fisheye", OSD_FISHEYE); post.set("aspect", target.width / (float)target.height);
+  post.set("saturation", (footage ? visualValue("saturation",GRADE_SATURATION) : 1.564) - GRADE_DANGER_DESAT * dg);
+  post.set("contrast", footage ? visualValue("contrast",GRADE_CONTRAST) : 0.25);
+  post.set("brightness", footage ? visualValue("brightness",GRADE_BRIGHTNESS) : 0.0); post.set("gammaAdj", footage ? visualValue("gamma",GRADE_GAMMA) : 1.0);
+  if (footage) post.set("tint", GRADE_TINT[0]*(1+.15*visualValue("warmth",0)), GRADE_TINT[1], GRADE_TINT[2]*(1-.2*visualValue("warmth",0)));
+  else post.set("tint", 1.02, 1.0, 0.92);
+  post.set("vignette", footage ? visualValue("vignette",GRADE_VIGNETTE) : 0.22);
+  post.set("bloomAmt", footage ? visualValue("bloom",GRADE_BLOOM) : 0.35); post.set("halation", footage ? visualValue("halation",GRADE_HALATION) : 0.25);
+  target.filter(post);
+}
+
+// =====================================================================
+// GPU MPEG-2-style decoded copy: studio-swing YCbCr, 4:2:0, block DCT,
+// intra/inter quantizers, decoded-reference P frames and macroblock skips.
+// No full-frame CPU readback. Uses the same version-sensitive OpenGL cache bridge as tape.
+PGraphics codecSrc, codecSrcC, codecMB, codecLevY, codecLevC, codecTmpY, codecTmpC;
+PGraphics[] codecDecY = new PGraphics[2], codecDecC = new PGraphics[2];
+PShader codecIn, codecChroma, codecSkip, codecEncode, codecDecode, codecShow, codecForwardX, codecInverseX;
+int codecCur;
+float codecLastFrame = -1, codecLastI = -1, codecMotion;
+boolean codecForceI = true;
+HashMap<PGraphics, PImage> codecViews = new HashMap<PGraphics, PImage>();
+PImage screenView;
+
+PImage codecTexView(PGraphics user, processing.opengl.Texture tex, PImage holder) {
+  if (holder == null) { holder = new PImage(); holder.parent = this; holder.format = ARGB; }
+  holder.width = holder.pixelWidth = tex.width; holder.height = holder.pixelHeight = tex.height;
+  holder.setModified(false);
+  ((processing.opengl.PGraphicsOpenGL)user).setCache(holder, tex);
+  return holder;
+}
+PImage codecView(PGraphics user, PGraphics src) {
+  PImage h = codecTexView(user, ((processing.opengl.PGraphicsOpenGL)src).getTexture(false), codecViews.get(src));
+  codecViews.put(src, h); return h;
+}
+PGraphics codecPlane(int w, int h) {
+  PGraphics p = createGraphics(w, h, P2D); p.noSmooth();
+  p.beginDraw(); p.background(0); p.endDraw(); return p;
+}
+void initCodec(int w, int h) {
+  PGraphics[] old = {codecSrc, codecSrcC, codecMB, codecLevY, codecLevC,
+    codecDecY[0], codecDecY[1], codecDecC[0], codecDecC[1], codecTmpY, codecTmpC};
+  for (PGraphics p : old) if (p != null) p.dispose();
+  codecViews.clear();
+  codecSrc = codecPlane(w, h); codecSrcC = codecPlane(w / 2, h / 2);
+  codecTmpY=codecPlane(w,h); codecTmpC=codecPlane(w/2,h/2);
+  codecMB = codecPlane(w / 16, h / 16);
+  codecLevY = codecPlane(w, h); codecLevC = codecPlane(w / 2, h / 2);
+  for (int k = 0; k < 2; k++) { codecDecY[k] = codecPlane(w, h); codecDecC[k] = codecPlane(w / 2, h / 2); }
+  if (codecIn == null) {
+    codecForwardX = new PShader(this,POST_VERT,CODEC_FORWARD_X_FRAG);
+    codecInverseX = new PShader(this,POST_VERT,CODEC_INVERSE_X_FRAG);
+    codecIn = new PShader(this, POST_VERT, CODEC_IN_FRAG);
+    codecChroma = new PShader(this, POST_VERT, CODEC_CHROMA_FRAG);
+    codecSkip = new PShader(this, POST_VERT, CODEC_SKIP_FRAG);
+    codecEncode = new PShader(this, POST_VERT, CODEC_ENCODE_FRAG);
+    codecDecode = new PShader(this, POST_VERT, CODEC_DECODE_FRAG);
+    codecShow = new PShader(this, POST_VERT, CODEC_SHOW_FRAG);
+  }
+  codecCur = 0; codecForceI = true;
+}
+void codecPass(PGraphics pg, PShader sh, PImage input) {
+  pg.beginDraw(); pg.blendMode(REPLACE); pg.noTint(); pg.imageMode(CORNER);
+  pg.shader(sh); pg.image(input, 0, 0, pg.width, pg.height);
+  pg.resetShader(); pg.blendMode(BLEND); pg.endDraw();
+}
+void codecPlanePass(PGraphics output, PShader sh, PGraphics input, PGraphics prev,
+                    int w, int h, float mbScale, float chroma, boolean intra, float q) {
+  if(sh==codecForwardX || sh==codecDecode) sh.set("prevPlane", codecView(output, prev));
+  sh.set("mbMap", codecView(output, codecMB));
+  sh.set("planeSize", (float)w, (float)h); sh.set("mbSize", (float)codecMB.width, (float)codecMB.height);
+  sh.set("mbScale", mbScale); sh.set("intra", intra ? 1.0 : 0.0);
+  if(sh==codecEncode || sh==codecInverseX) {
+    sh.set("chroma",chroma); sh.set("qscale",q); sh.set("dcStep",8.0); sh.set("interStep",16.0);
+  }
+  codecPass(output, sh, codecView(output, input));
+}
+void applyCodec(PGraphics target) {
+  if (!CODEC_ON || visualValue("codec",1)<.5) return;
+  int h = LOW_RES_RECORDING
+    ? max(16, min(LOW_RES_LINES, target.height) / 16 * 16)
+    : max(16, min(CODEC_LINES, target.height) / 16 * 16);
+  int w = max(16, round(target.width * h / (float)target.height / 16) * 16);
+  processing.opengl.PGraphicsOpenGL screen = (processing.opengl.PGraphicsOpenGL)target;
+  screen.flush(); processing.opengl.Texture frame = screen.getTexture();
+  if (codecSrc == null || codecSrc.width != w || codecSrc.height != h) initCodec(w, h);
+  float now = millis() / 1000.0;
+  float motion = constrain(camOmega / 2.5 + (moving ? (sprinting ? 0.4 : 0.15) : 0), 0, 1.5);
+  codecMotion = lerp(codecMotion, motion, 1 - exp(-frameDt * 4));
+  if (CODEC_FPS <= 0 || codecForceI || now - codecLastFrame >= 1 / CODEC_FPS) {
+    codecLastFrame = now;
+    boolean intra = codecForceI || CODEC_GOP_SECONDS <= 0 || now - codecLastI >= CODEC_GOP_SECONDS;
+    if (intra) { codecLastI = now; codecForceI = false; }
+    float q = CODEC_QSCALE * visualValue("quantizer",1) * (1 + CODEC_MOTION_STARVE * codecMotion)
+      * (1 + CODEC_NOISE_STARVE * constrain(gainDbApplied / 18, 0, 1));
+    PGraphics prevY = codecDecY[codecCur], prevC = codecDecC[codecCur];
+    screenView = codecTexView(codecSrc, frame, screenView);
+    codecIn.set("footprint", target.width / (float)w, target.height / (float)h);
+    codecPass(codecSrc, codecIn, screenView);
+    codecChroma.set("srcSize", (float)w, (float)h);
+    codecPass(codecSrcC, codecChroma, codecView(codecSrcC, codecSrc));
+    if (!intra) {
+      codecSkip.set("prevPlane", codecView(codecMB, prevY));
+      codecSkip.set("prevChroma", codecView(codecMB, prevC));
+      codecSkip.set("planeSize", (float)w, (float)h); codecSkip.set("threshold", CODEC_SKIP_SAD * q);
+      codecPass(codecMB, codecSkip, codecView(codecMB, codecSrc));
+    }
+    codecPlanePass(codecTmpY,codecForwardX,codecSrc,prevY,w,h,16,0,intra,q);
+    codecPlanePass(codecTmpC,codecForwardX,codecSrcC,prevC,w/2,h/2,8,1,intra,q);
+    codecPlanePass(codecLevY, codecEncode, codecTmpY, prevY, w, h, 16, 0, intra, q);
+    codecPlanePass(codecLevC, codecEncode, codecTmpC, prevC, w / 2, h / 2, 8, 1, intra, q);
+    codecPlanePass(codecTmpY,codecInverseX,codecLevY,prevY,w,h,16,0,intra,q);
+    codecPlanePass(codecTmpC,codecInverseX,codecLevC,prevC,w/2,h/2,8,1,intra,q);
+    codecPlanePass(codecDecY[1 - codecCur], codecDecode, codecTmpY, prevY, w, h, 16, 0, intra, q);
+    codecPlanePass(codecDecC[1 - codecCur], codecDecode, codecTmpC, prevC, w / 2, h / 2, 8, 1, intra, q);
+    codecCur = 1 - codecCur;
+  }
+  // Always restore the caller, including cadence-held frames and offscreen targets.
+  screen.beginPGL(); screen.endPGL();
+  codecShow.set("chromaPlane", codecView(target, codecDecC[codecCur]));
+  codecShow.set("lumaSize", (float)w, (float)h); codecShow.set("chromaSize", w / 2.0, h / 2.0);
+  target.pushStyle(); target.imageMode(CORNER); target.noTint(); target.blendMode(REPLACE);
+  target.shader(codecShow); target.image(codecView(target, codecDecY[codecCur]), 0, 0, target.width, target.height);
+  target.resetShader(); target.popStyle();
+}
+
+String[] CODEC_IN_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture;",
+  "uniform vec2 texOffset,footprint;",
+  "varying vec4 vertTexCoord;",
+  "void main() {",
+  "  vec2 o=texOffset*footprint*0.25,uv=vertTexCoord.st;",
+  "  vec3 c=(texture2D(texture,uv+vec2(-o.x,-o.y)).rgb+texture2D(texture,uv+vec2(o.x,-o.y)).rgb",
+  "         +texture2D(texture,uv+vec2(-o.x,o.y)).rgb+texture2D(texture,uv+vec2(o.x,o.y)).rgb)*0.25;",
+  "  float y=dot(c,vec3(0.299,0.587,0.114));",
+  "  gl_FragColor=vec4((16.0+219.0*y)/255.0,(128.0+224.0*0.564*(c.b-y))/255.0,(128.0+224.0*0.713*(c.r-y))/255.0,1.0);",
+  "}"
+};
+
+String[] CODEC_CHROMA_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture;",
+  "uniform vec2 srcSize;",
+  "varying vec4 vertTexCoord;",
+  "void main() {",
+  "  vec2 p=floor(gl_FragCoord.xy)*2.0;",
+  "  vec2 s=texture2D(texture,(p+vec2(0.5,0.5))/srcSize,-16.0).gb+texture2D(texture,(p+vec2(1.5,0.5))/srcSize,-16.0).gb",
+  "        +texture2D(texture,(p+vec2(0.5,1.5))/srcSize,-16.0).gb+texture2D(texture,(p+vec2(1.5,1.5))/srcSize,-16.0).gb;",
+  "  gl_FragColor=vec4(s*0.25,0.0,1.0);",
+  "}"
+};
+
+String[] CODEC_SKIP_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,prevPlane,prevChroma;",
+  "uniform vec2 planeSize;",
+  "uniform float threshold;",
+  "varying vec4 vertTexCoord;",
+  "void main() {",
+  "  vec2 m=floor(gl_FragCoord.xy)*16.0;",
+  "  float sad=0.0;",
+  "  for(int y=0;y<8;y++)for(int x=0;x<8;x++) {",
+  "    vec2 uv=(m+vec2(float(x),float(y))*2.0+0.5)/planeSize;",
+  "    vec3 now=texture2D(texture,uv,-16.0).rgb;",
+  "    float py=texture2D(prevPlane,uv,-16.0).r;",
+  "    vec2 pc=texture2D(prevChroma,uv,-16.0).rg;",
+  "    // Chroma changes must wake a block too; equal-luminance colour changes cannot freeze.",
+  "    sad+=abs(now.r-py)+0.25*(abs(now.g-pc.x)+abs(now.b-pc.y));",
+  "  }",
+  "  gl_FragColor=vec4(sad*255.0/64.0<threshold?1.0:0.0,0.0,0.0,1.0);",
+  "}"
+};
+
+String[] CODEC_ENCODE_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,prevPlane,mbMap;",
+  "uniform vec2 planeSize,mbSize;",
+  "uniform float mbScale,chroma,intra,qscale,dcStep,interStep;",
+  "varying vec4 vertTexCoord;",
+  "const float PI=3.14159265359;",
+  "vec2 plane(sampler2D s,vec2 p) { return texture2D(s,(p+0.5)/planeSize,-16.0).rg*255.0; }",
+  "float intraQ(float f) { return chroma>0.5?17.0+82.0*smoothstep(1.0,4.0,f):12.0+88.0*smoothstep(2.0,10.0,f); }",
+  "bool skipBlock(vec2 b) { return intra<0.5 && texture2D(mbMap,(floor(b/mbScale)+0.5)/mbSize,-16.0).r>0.5; }",
+  "vec4 packPair(vec2 v,float range) {",
+  "  vec2 n=clamp(floor(v*(65536.0/range)+32768.0+0.5),0.0,65535.0);",
+  "  return vec4(floor(n.x/256.0),mod(n.x,256.0),floor(n.y/256.0),mod(n.y,256.0))/255.0;",
+  "}",
+  "vec2 unpackPair(vec2 p,float range) {",
+  "  vec4 n=floor(texture2D(texture,(p+0.5)/planeSize,-16.0)*255.0+0.5);",
+  "  return (vec2(n.r*256.0+n.g,n.b*256.0+n.a)-32768.0)*(range/65536.0);",
+  "}",
+  "void main() {",
+  "  vec2 c=floor(gl_FragCoord.xy),b=floor(c/8.0)*8.0,uv=c-b;",
+  "  if(skipBlock(b)){gl_FragColor=vec4(vec2(128.0/255.0),0.0,1.0);return;}",
+  "  vec2 sum=vec2(0.0);",
+  "  for(int k=0;k<8;k++) sum+=unpackPair(vec2(c.x,b.y+float(k)),2048.0)*cos((2.0*float(k)+1.0)*uv.y*PI/16.0);",
+  "  vec2 coef=sum*(uv.y<0.5?0.35355339:0.5);",
+  "  float f=uv.x+uv.y,q=intra>0.5?(f<0.5?dcStep:intraQ(f)*qscale):interStep*qscale;",
+  "  vec2 level=sign(coef)*floor(abs(coef)/q+(intra>0.5?0.5:0.3));",
+  "  gl_FragColor=vec4((clamp(level,-127.0,127.0)+128.0)/255.0,0.0,1.0);",
+  "}"
+};
+
+String[] CODEC_DECODE_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,prevPlane,mbMap;",
+  "uniform vec2 planeSize,mbSize;",
+  "uniform float mbScale,chroma,intra,qscale,dcStep,interStep;",
+  "varying vec4 vertTexCoord;",
+  "const float PI=3.14159265359;",
+  "vec2 plane(sampler2D s,vec2 p) { return texture2D(s,(p+0.5)/planeSize,-16.0).rg*255.0; }",
+  "float intraQ(float f) { return chroma>0.5?17.0+82.0*smoothstep(1.0,4.0,f):12.0+88.0*smoothstep(2.0,10.0,f); }",
+  "bool skipBlock(vec2 b) { return intra<0.5 && texture2D(mbMap,(floor(b/mbScale)+0.5)/mbSize,-16.0).r>0.5; }",
+  "vec4 packPair(vec2 v,float range) {",
+  "  vec2 n=clamp(floor(v*(65536.0/range)+32768.0+0.5),0.0,65535.0);",
+  "  return vec4(floor(n.x/256.0),mod(n.x,256.0),floor(n.y/256.0),mod(n.y,256.0))/255.0;",
+  "}",
+  "vec2 unpackPair(vec2 p,float range) {",
+  "  vec4 n=floor(texture2D(texture,(p+0.5)/planeSize,-16.0)*255.0+0.5);",
+  "  return (vec2(n.r*256.0+n.g,n.b*256.0+n.a)-32768.0)*(range/65536.0);",
+  "}",
+  "void main() {",
+  "  vec2 c=floor(gl_FragCoord.xy),b=floor(c/8.0)*8.0,xy=c-b;",
+  "  vec2 prev=plane(prevPlane,c);",
+  "  if(skipBlock(b)){gl_FragColor=vec4(prev/255.0,0.0,1.0);return;}",
+  "  vec2 sum=vec2(0.0);",
+  "  for(int k=0;k<8;k++) sum+=unpackPair(vec2(c.x,b.y+float(k)),8192.0)*cos((2.0*xy.y+1.0)*float(k)*PI/16.0)*(k==0?0.35355339:0.5);",
+  "  vec2 rec=sum+(intra>0.5?vec2(128.0):prev);",
+  "  gl_FragColor=vec4(clamp(floor(rec+0.5),0.0,255.0)/255.0,0.0,1.0);",
+  "}"
+};
+
+String[] CODEC_SHOW_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,chromaPlane;",
+  "uniform vec2 lumaSize,chromaSize;",
+  "varying vec4 vertTexCoord;",
+  "vec2 bilinear(sampler2D s,vec2 uv,vec2 size) {",
+  "  vec2 p=uv*size-0.5,i=floor(p),f=p-i;",
+  "  vec2 a=clamp(i,vec2(0.0),size-1.0),b=clamp(i+1.0,vec2(0.0),size-1.0);",
+  "  vec2 s00=texture2D(s,(a+0.5)/size,-16.0).rg,s10=texture2D(s,(vec2(b.x,a.y)+0.5)/size,-16.0).rg;",
+  "  vec2 s01=texture2D(s,(vec2(a.x,b.y)+0.5)/size,-16.0).rg,s11=texture2D(s,(b+0.5)/size,-16.0).rg;",
+  "  return mix(mix(s00,s10,f.x),mix(s01,s11,f.x),f.y);",
+  "}",
+  "void main() {",
+  "  vec2 uv=vertTexCoord.st;",
+  "  float y=(bilinear(texture,uv,lumaSize).r*255.0-16.0)/219.0;",
+  "  vec2 c=(bilinear(chromaPlane,uv,chromaSize)*255.0-128.0)/224.0;",
+  "  vec3 rgb=vec3(y+1.402*c.y,y-0.344136*c.x-0.714136*c.y,y+1.772*c.x);",
+  "  gl_FragColor=vec4(clamp(rgb,0.0,1.0),1.0);",
+  "}"
+};
+
+
+// =====================================================================
+// Low-profile ceiling fittings. The metal trim is a separate, normally lit
+// ring; only the inset plastic diffuser emits. Both remain inside the ceiling.
+PImage makePanelFrame() {
+  PImage tex = createImage(32, 32, RGB);
+  tex.loadPixels();
+  for (int y=0;y<32;y++) for (int x=0;x<32;x++) {
+    float brushed = 2 * sin(y * 1.7) + sin(x * 0.7);
+    tex.pixels[y*32+x] = color(206+brushed, 203+brushed, 191+brushed);
+  }
+  tex.updatePixels();
+  return tex;
+}
+
+void fixtureQuad(PGraphics target, float x0, float y0, float x1, float y1, float z) {
+  target.vertex(x0,y0,z,0,0); target.vertex(x1,y0,z,1,0);
+  target.vertex(x1,y1,z,1,1); target.vertex(x0,y1,z,0,1);
+}
+
+// A gentle radial wash, with no rectangular plateau. Identical formula to
+// ceilingSpill() in the world shader so direct illumination and the bake agree.
+float ceilingSpill(float dx, float dy) {
+  return CEILING_SPILL_POWER * exp(-(dx*dx+dy*dy)/(2*sq(CEILING_SPILL_RADIUS)));
+}
+
+// =====================================================================
+// RUNNING AIR: speed-controlled microphone wind and a small camera-light wobble.
+// The wind is synthesized, requiring no extra audio assets, and uses the FX bus.
+class SVF {
+  float ic1, ic2, a1, a2, a3, k = 1.4142, lp, bp, hp;
+  void set(float fc, float q, float sr) {
+    float g = (float) Math.tan(Math.PI * min(fc, sr * 0.45) / sr);
+    k = 1 / q;
+    a1 = 1 / (1 + g * (g + k)); a2 = g * a1; a3 = g * a2;
+  }
+  float tick(float v0) {
+    float v3 = v0 - ic2;
+    float v1 = a1 * ic1 + a2 * v3;
+    float v2 = ic2 + a2 * ic1 + a3 * v3;
+    ic1 = 2 * v1 - ic1; ic2 = 2 * v2 - ic2;
+    lp = v2; bp = v1; hp = v0 - k * v1 - v2;
+    return lp;
+  }
+}
+
+class Drift {
+  float from, _to, ph, len = 1, rate;
+  Drift(float rate) { this.rate = rate; }
+  float tick(float dt, MicWind w) {
+    ph += dt * rate / len;
+    if (ph >= 1) { ph -= 1; from = _to; _to = w.rnd(); len = 0.6 + 0.4 * (w.rnd() + 1); }
+    float s = ph * ph * (3 - 2 * ph);
+    return from + (_to - from) * s;
+  }
+}
+
+class MicWind extends UGen {
+  volatile float tAir, tSwing, tHead, tSide, tStride;
+  volatile boolean hush = true;
+  volatile float level;
+
+  float sr = 44100, dt;
+  boolean ready;
+  float air, swing, head, side, stride, a, amt;
+  float kUp, kDown, kBufUp, kBufDown, kBody, kEnvUp, kEnvDown, thumpDecay, dcR;
+  float nR, nB, nS, nH;
+  int seed = 0x2F6E2B1, ctl;
+  SVF rumble = new SVF(), rumbleL = new SVF(), rumbleR = new SVF(), boom = new SVF();
+  SVF body = new SVF(), swish = new SVF(), hissL = new SVF(), hissR = new SVF();
+  Drift slow = new Drift(0.7), mid = new Drift(2.6), flutter = new Drift(11);
+  float buffet, bodyEnv, lastGust, thumpEnv, thumpPh, thumpF, thumpCool, env;
+  float dcxL, dcyL, dcxR, dcyR;
+
+  float rnd() {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    return seed * 4.656613e-10;
+  }
+
+  void coefs() {
+    dt = 1 / sr;
+    kUp = 1 - exp(-dt / 0.03); kDown = 1 - exp(-dt / 0.15);
+    kBufUp = 1 - exp(-dt / 0.004); kBufDown = 1 - exp(-dt / 0.08);
+    kBody = 1 - exp(-dt / 0.06);
+    kEnvUp = 1 - exp(-dt / 0.005); kEnvDown = 1 - exp(-dt / 0.35);
+    thumpDecay = exp(-dt / 0.075);
+    dcR = exp(-TWO_PI * 30 * dt);
+    ctl = 0; ready = true;
+  }
+
+  float sat(float x) {
+    x = constrain(x, -5, 5);
+    x += 0.08 * x * x;
+    if (x > 3) return 1;
+    if (x < -3) return -1;
+    float x2 = x * x;
+    return x * (27 + x2) / (27 + 9 * x2);
+  }
+
+  protected void uGenerate(float[] channels) {
+    float s = sampleRate();
+    if (s > 0 && s != sr) { sr = s; ready = false; }
+    if (!ready) coefs();
+
+    if (hush) { air = swing = stride = buffet = bodyEnv = thumpEnv = env = 0; }
+    float tA = hush ? 0 : tAir, tS = hush ? 0 : tSwing;
+    air += (tA - air) * (tA > air ? kUp : kDown);
+    swing += (tS - swing) * (tS > swing ? kUp * 2 : kDown);
+    head += (tHead - head) * kDown;
+    side += (tSide - side) * kDown;
+    stride += (tStride - stride) * kUp;
+    float drive = air + swing;
+
+    if (drive < 0.0005 && env < 0.0003) {
+      env = 0; level = 0;
+      for (int c = 0; c < channels.length; c++) channels[c] = 0;
+      return;
+    }
+
+    if (--ctl <= 0) {
+      ctl = 32;
+      a = min(drive, 1.5); amt = pow(a, 1.6);
+      float fr = 50 + 130 * a;
+      rumble.set(fr, 0.6, sr); rumbleL.set(fr, 0.6, sr); rumbleR.set(fr, 0.6, sr);
+      nR = sqrt(sr / (2.22 * fr));
+      boom.set(65 + 15 * a, 2.4, sr);
+      float fb = 200 + 700 * a;
+      body.set(fb, 0.8, sr); nB = sqrt(sr * 0.8 / (PI * fb));
+      float fs = 380 + 1700 * min(swing, 1.3);
+      swish.set(fs, 1.8, sr); nS = sqrt(sr * 1.8 / (PI * fs));
+      float fh = 2200 + 2600 * a * (0.5 + 0.5 * max(head, 0));
+      hissL.set(fh, 0.6, sr); hissR.set(fh * 1.07, 0.6, sr); nH = sqrt(sr * 0.6 / (PI * fh));
+      level = env;
+    }
+
+    float speedUp = 0.6 + 0.9 * a;
+    float g = 0.5 + 0.38 * slow.tick(dt * speedUp, this) + 0.24 * mid.tick(dt * speedUp, this)
+            + 0.10 * flutter.tick(dt * speedUp, this) + 0.22 * stride * min(air, 1);
+    float thr = 0.90 - 0.40 * min(air, 1.2) - 0.30 * min(swing, 1);
+    float gust = max(0, g - thr) / max(0.2, 1 - thr);
+    gust = gust * gust * min(drive * 2, 1);
+    buffet += (gust - buffet) * (gust > buffet ? kBufUp : kBufDown);
+    bodyEnv += ((0.35 + 0.65 * buffet) - bodyEnv) * kBody;
+
+    if (MIC_WIND_GUST > 0 && (gust - lastGust) * sr > 3.5 && thumpCool <= 0 && drive > 0.25) {
+      thumpEnv = min(1.3, 0.5 + gust);
+      thumpF = 42 + 13 * (rnd() + 1); thumpPh = 0;
+      thumpCool = 0.12 + 0.1 * (rnd() + 1);
+    }
+    lastGust = gust; thumpCool -= dt;
+    float th = 0;
+    if (thumpEnv > 0.0005) {
+      thumpPh += TWO_PI * thumpF * (0.7 + 0.6 * thumpEnv) * dt;
+      th = thumpEnv * ((float) Math.sin(thumpPh) + 0.2 * rnd());
+      thumpEnv *= thumpDecay;
+    }
+
+    float rC = rumble.tick(rnd() * 1.732 * nR);
+    float rL = rumbleL.tick(rnd() * 1.732 * nR), rR = rumbleR.tick(rnd() * 1.732 * nR);
+    float rumbleAmp = (0.14 + 1.1 * MIC_WIND_GUST * buffet) * amt;
+    float tail = 1 - 0.35 * max(-head, 0);
+    boom.tick(rC * rumbleAmp + th);
+    float bass = boom.k * boom.bp * MIC_WIND_BASS * 1.1
+      * (1 + MIC_WIND_SPRINT_BASS * constrain(air, 0, 1));
+    body.tick(rnd() * 1.732 * nB);
+    float mids = body.k * body.bp * bodyEnv * amt * MIC_WIND_GUST * 0.32 * (0.6 + 0.4 * max(head, 0));
+    swish.tick(rnd() * 1.732 * nS);
+    float sw = swish.k * swish.bp * swing * swing * MIC_WIND_GUST * 0.35;
+    float hissAmt = amt * MIC_WIND_GUST * 0.06 * (0.3 + 0.7 * max(head, 0)) * (0.6 + 0.4 * bodyEnv);
+    hissL.tick(rnd() * 1.732 * nH); hissR.tick(rnd() * 1.732 * nH);
+
+    float common = rC * rumbleAmp * 0.85 * tail + bass + mids + sw + th * 0.55;
+    float L = (common + rL * rumbleAmp * 0.4 + hissL.k * hissL.bp * hissAmt) * (1 - 0.3 * side);
+    float R = (common + rR * rumbleAmp * 0.4 + hissR.k * hissR.bp * hissAmt) * (1 + 0.3 * side);
+    float pre = 0.35 + 1.4 * MIC_WIND_DRIVE * buffet * min(air + swing, 1);
+    float yL = sat(L * pre), yR = sat(R * pre);
+    float hL = yL - dcxL + dcR * dcyL; dcxL = yL; dcyL = hL;
+    float hR = yR - dcxR + dcR * dcyR; dcxR = yR; dcyR = hR;
+    float oL = hL * MIC_WIND_GAIN, oR = hR * MIC_WIND_GAIN;
+    float peak = max(abs(oL), abs(oR));
+    env += (peak - env) * (peak > env ? kEnvUp : kEnvDown);
+
+    if (channels.length == 1) channels[0] = 0.5 * (oL + oR);
+    else {
+      channels[0] = oL; channels[1] = oR;
+      for (int c = 2; c < channels.length; c++) channels[c] = 0.5 * (oL + oR);
+    }
+  }
+}
+void buildRunWhoosh() {
+  micWind = new MicWind();
+  micWind.patch(fxMix);
+  runAir = 0;
+}
+
+void updateRunAir(float dt, float actualSpeed) {
+  if (micWind == null) return;
+  boolean live = state == PLAYING && !paused;
+  dt = max(0, dt);
+
+  float lo = WALK_SPEED * 0.9, hi = SPRINT_SPEED * 1.25;
+  float f = constrain((actualSpeed - lo) / (hi - lo), 0, 1);
+  float flow = live ? f * f * (3 - 2 * f) * 1.25 : 0;
+  runAir = lerp(runAir, flow, 1 - exp(-dt * (flow > runAir ? 7 : 12)));
+  if (flow == 0 && runAir < 0.0001) runAir = 0;
+
+  float dYaw = angleDiff(windLastYaw, yaw);
+  float turnRate = dt > 0 ? sqrt(sq(dYaw) + sq(pitch - windLastPitch)) / dt : 0;
+  float turnSide = dt > 0 ? dYaw / dt : 0;
+  windLastYaw = yaw; windLastPitch = pitch;
+  float swingT = live ? constrain((turnRate - 1.5) / (SWING_FULL - 1.5), 0, 1.4) : 0;
+  windSwing = lerp(windSwing, swingT, 1 - exp(-dt * (swingT > windSwing ? 30 : 7)));
+
+  float sp = sqrt(pvx * pvx + pvy * pvy), head = 0, side = 0;
+  if (sp > 1) {
+    head = (pvx * cos(yaw) + pvy * sin(yaw)) / sp;
+    side = (-pvx * sin(yaw) + pvy * cos(yaw)) / sp;
+  }
+  side = constrain(side * min(runAir, 1) + 0.6 * constrain(turnSide / SWING_FULL, -1, 1) * windSwing, -1, 1);
+
+  micWind.tAir = runAir;
+  micWind.tSwing = windSwing;
+  micWind.tHead = head;
+  micWind.tSide = side;
+  micWind.tStride = live && moving ? pow(abs(sin(bobPhase)), 8) : 0;
+  micWind.hush = !live;
+}
+
+void updateRunWhoosh() {
+  if (micWind != null) micWind.hush = !(state == PLAYING && !paused);
+}
+
+void silenceRunWhoosh() {
+  runAir = windSwing = 0;
+  windLastYaw = yaw; windLastPitch = pitch;
+  if (micWind != null) {
+    micWind.hush = true;
+    micWind.tAir = micWind.tSwing = micWind.tStride = 0;
+  }
+}
+
+float windDuckDb() {
+  if (micWind == null) return 0;
+  return MIC_AGC_DUCK_DB * constrain(micWind.level / (MIC_WIND_GAIN * 0.5), 0, 1);
+}
+
+// Exactly the same candidate slabs as the former 24-entry GLSL searches.
+void rebuildShadowLists() {
+  if(shadowWalls==null || shadowWalls.height!=GRID*GRID) shadowWalls=createImage(24,GRID*GRID,RGB);
+  shadowWallCounts=new int[GRID*GRID]; shadowWalls.loadPixels();
+  java.util.Arrays.fill(shadowWalls.pixels,0xff000000);
+  for(int y=0;y<GRID;y++) for(int x=0;x<GRID;x++) {
+    int id=y*GRID+x,n=0;
+    for(int edge=0;edge<3;edge++) for(int along=-1;along<=2;along++) {
+      int ex=x+edge,ey=y+along;
+      if(hasWallX(ex,ey)) shadowWalls.pixels[id*24+n++]=0xff000000|(ex<<16)|(ey<<8)|1;
+      ex=x+along;ey=y+edge;
+      if(hasWallY(ex,ey)) shadowWalls.pixels[id*24+n++]=0xff000000|(ex<<16)|(ey<<8)|2;
+    }
+    shadowWallCounts[id]=n;
+  }
+  shadowWalls.updatePixels(); shadowListsDirty=false;
+}
+
+String[] CODEC_FORWARD_X_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,prevPlane,mbMap;",
+  "uniform vec2 planeSize,mbSize;",
+  "uniform float mbScale,chroma,intra,qscale,dcStep,interStep;",
+  "varying vec4 vertTexCoord;",
+  "const float PI=3.14159265359;",
+  "vec2 plane(sampler2D s,vec2 p) { return texture2D(s,(p+0.5)/planeSize,-16.0).rg*255.0; }",
+  "float intraQ(float f) { return chroma>0.5?17.0+82.0*smoothstep(1.0,4.0,f):12.0+88.0*smoothstep(2.0,10.0,f); }",
+  "bool skipBlock(vec2 b) { return intra<0.5 && texture2D(mbMap,(floor(b/mbScale)+0.5)/mbSize,-16.0).r>0.5; }",
+  "vec4 packPair(vec2 v,float range) {",
+  "  vec2 n=clamp(floor(v*(65536.0/range)+32768.0+0.5),0.0,65535.0);",
+  "  return vec4(floor(n.x/256.0),mod(n.x,256.0),floor(n.y/256.0),mod(n.y,256.0))/255.0;",
+  "}",
+  "vec2 unpackPair(vec2 p,float range) {",
+  "  vec4 n=floor(texture2D(texture,(p+0.5)/planeSize,-16.0)*255.0+0.5);",
+  "  return (vec2(n.r*256.0+n.g,n.b*256.0+n.a)-32768.0)*(range/65536.0);",
+  "}",
+  "void main() {",
+  "  vec2 c=floor(gl_FragCoord.xy),b=floor(c/8.0)*8.0; float u=c.x-b.x;",
+  "  if(skipBlock(b)){gl_FragColor=packPair(vec2(0.0),2048.0);return;}",
+  "  vec2 sum=vec2(0.0);",
+  "  for(int k=0;k<8;k++) {",
+  "    vec2 p=vec2(b.x+float(k),c.y);",
+  "    vec2 v=plane(texture,p)-(intra>0.5?vec2(128.0):plane(prevPlane,p));",
+  "    sum+=v*cos((2.0*float(k)+1.0)*u*PI/16.0);",
+  "  }",
+  "  gl_FragColor=packPair(sum*(u<0.5?0.35355339:0.5),2048.0);",
+  "}"
+};
+
+String[] CODEC_INVERSE_X_FRAG = {
+  "#define PROCESSING_TEXTURE_SHADER",
+  "#ifdef GL_ES",
+  "precision highp float;",
+  "#endif",
+  "uniform sampler2D texture,prevPlane,mbMap;",
+  "uniform vec2 planeSize,mbSize;",
+  "uniform float mbScale,chroma,intra,qscale,dcStep,interStep;",
+  "varying vec4 vertTexCoord;",
+  "const float PI=3.14159265359;",
+  "vec2 plane(sampler2D s,vec2 p) { return texture2D(s,(p+0.5)/planeSize,-16.0).rg*255.0; }",
+  "float intraQ(float f) { return chroma>0.5?17.0+82.0*smoothstep(1.0,4.0,f):12.0+88.0*smoothstep(2.0,10.0,f); }",
+  "bool skipBlock(vec2 b) { return intra<0.5 && texture2D(mbMap,(floor(b/mbScale)+0.5)/mbSize,-16.0).r>0.5; }",
+  "vec4 packPair(vec2 v,float range) {",
+  "  vec2 n=clamp(floor(v*(65536.0/range)+32768.0+0.5),0.0,65535.0);",
+  "  return vec4(floor(n.x/256.0),mod(n.x,256.0),floor(n.y/256.0),mod(n.y,256.0))/255.0;",
+  "}",
+  "vec2 unpackPair(vec2 p,float range) {",
+  "  vec4 n=floor(texture2D(texture,(p+0.5)/planeSize,-16.0)*255.0+0.5);",
+  "  return (vec2(n.r*256.0+n.g,n.b*256.0+n.a)-32768.0)*(range/65536.0);",
+  "}",
+  "void main() {",
+  "  vec2 c=floor(gl_FragCoord.xy),b=floor(c/8.0)*8.0,xy=c-b;",
+  "  if(skipBlock(b)){gl_FragColor=packPair(vec2(0.0),8192.0);return;}",
+  "  vec2 sum=vec2(0.0);",
+  "  for(int k=0;k<8;k++) {",
+  "    vec2 level=floor(plane(texture,vec2(b.x+float(k),c.y))+0.5)-128.0;",
+  "    float f=float(k)+xy.y,q=intra>0.5?(f<0.5?dcStep:intraQ(f)*qscale):interStep*qscale;",
+  "    sum+=level*q*cos((2.0*xy.x+1.0)*float(k)*PI/16.0)*(k==0?0.35355339:0.5);",
+  "  }",
+  "  gl_FragColor=packPair(sum,8192.0);",
+  "}"
+};
+
+
+// Display and recording resolutions are independent. F11 switches fullscreen/windowed.
+// The modern recording follows the render resolution; LOW_RES_RECORDING provides the
+// deliberately soft legacy profile. The gameplay HUD stays at display resolution.
+final boolean START_FULLSCREEN=true, ADAPTIVE_RESOLUTION=true;
+final int RENDER_MAX_HEIGHT=900, RENDER_MAX_WIDTH=1600, RENDER_MIN_HEIGHT=540;
+final float RENDER_TARGET_FPS=60;
+PGraphics sceneFrame;
+PGraphics renderTarget;
+PGraphics viewGraphics() { return renderTarget==null?g:renderTarget; }
+int viewWidth() { return viewGraphics().width; }
+int viewHeight() { return viewGraphics().height; }
+float renderQuality=1, renderCostMs=0;
+int resolutionFrames=0, resolutionCooldown=0, displayW=-1, displayH=-1, displaySettleUntil=0;
+boolean fullscreenKeyHeld=false;
+// Processing starts borderless fullscreen; NEWT's exclusive-fullscreen flag
+// alone does not describe that initial mode.
+boolean displayFullscreen=START_FULLSCREEN;
+volatile boolean displayModeChanging=false;
+
+float uiScale() { return max(0.01,min(viewWidth()/1360.0,viewHeight()/900.0)); }
+float uiWidth() { return viewWidth()/uiScale(); }
+float uiHeight() { return viewHeight()/uiScale(); }
+float uiMouseX() { return mouseX/uiScale(); }
+float uiMouseY() { return mouseY/uiScale(); }
+void beginUi() { viewGraphics().pushMatrix(); viewGraphics().scale(uiScale()); }
+void endUi() { viewGraphics().popMatrix(); }
+
+void updateDisplaySize() {
+  if(width==displayW && height==displayH) return;
+  displayW=width; displayH=height; displaySettleUntil=millis()+200;
+  resolutionFrames=0; renderCostMs=0; resolutionCooldown=millis()+2000;
+  if(!displayFullscreen && !displayModeChanging && win!=null) {
+    if(win.isMaximizedHorz() && win.isMaximizedVert())displayModePref=2;
+    else{displayModePref=1;windowedW=width;windowedH=height;}
+    videoSavePending=true;videoSaveAfter=millis()+750;
+  }
+  // Avoid treating the OS pointer recenter during a resize as a camera turn.
+  if(state==PLAYING && !paused && focused) { skipMouse=2; }
+}
+
+int[] sceneSize(int w,int h,float quality) {
+  float fit=min(1,min(RENDER_MAX_HEIGHT/(float)max(1,h),RENDER_MAX_WIDTH/(float)max(1,w)));
+  float minQuality=min(1,RENDER_MIN_HEIGHT/max(1,h*fit));
+  fit*=constrain(quality,minQuality,1);
+  return new int[]{max(16,round(w*fit)),max(16,round(h*fit))};
+}
+
+void ensureSceneFrame() {
+  int[] size=sceneSize(width,height,renderQuality);
+  // While the user drags a window edge, stretch the existing recording instead
+  // of allocating and disposing ten codec framebuffers on every resize event.
+  if(sceneFrame!=null && millis()<displaySettleUntil) return;
+  if(sceneFrame!=null && sceneFrame.width==size[0] && sceneFrame.height==size[1]) return;
+  if(sceneFrame!=null) {
+    float sx=size[0]/(float)sceneFrame.width,sy=size[1]/(float)sceneFrame.height;
+    for(Particle p:parts){p.x*=sx;p.y*=sy;p.vx*=sx;p.vy*=sy;}
+    sceneFrame.dispose();
+  }
+  sceneFrame=createGraphics(size[0],size[1],P3D); sceneFrame.noSmooth();
+  codecForceI=true; meterNext=0; resolutionFrames=0;
+}
+
+void tuneRenderResolution(float cost) {
+  if(!ADAPTIVE_RESOLUTION || paused || !focused || millis()<displaySettleUntil || surfaceBake!=null) return;
+  renderCostMs=renderCostMs==0?cost:lerp(renderCostMs,cost,0.05);
+  if(++resolutionFrames<120 || millis()<resolutionCooldown) return;
+  float budget=1000.0/RENDER_TARGET_FPS,previous=renderQuality;
+  // Wide hysteresis and long cooldowns prevent resolution pumping.
+  if(renderCostMs>budget*1.12) renderQuality=max(0.5,renderQuality-0.10);
+  else if(renderCostMs<budget*0.65) renderQuality=min(1,renderQuality+0.05);
+  if(renderQuality!=previous){resolutionCooldown=millis()+4000;resolutionFrames=0;}
+}
+
+void render() {
+  updateDisplaySize(); ensureSceneFrame();
+  PGraphics display=viewGraphics(),previous=renderTarget; int screenW=display.width,screenH=display.height;
+  long started=System.nanoTime();
+  sceneFrame.beginDraw();
+  try {
+    renderTarget=sceneFrame;
+    viewGraphics().textureMode(NORMAL); renderScene();
+  } finally {
+    renderTarget=previous; sceneFrame.endDraw();
+  }
+  // These projected positions are consumed by gameplay on the next update.
+  for(Enemy e:enemies){e.sx*=screenW/(float)sceneFrame.width;e.sy*=screenH/(float)sceneFrame.height;}
+  processing.opengl.PGraphicsOpenGL pg=(processing.opengl.PGraphicsOpenGL)display;
+  pg.beginPGL();pg.endPGL();
+  begin2D(); viewGraphics().pushStyle(); viewGraphics().imageMode(CORNER); viewGraphics().noTint(); viewGraphics().blendMode(REPLACE);
+  viewGraphics().image(sceneFrame,0,0,width,height); viewGraphics().blendMode(BLEND); viewGraphics().popStyle();
+  if(visualValue("hud",1)>.5)drawHUD(); end2D();
+  // Swapping render targets resolves the recording before presentation. No
+  // full-frame pixel readback, GPU fence or glFinish is introduced in gameplay.
+  tuneRenderResolution(max((System.nanoTime()-started)/1000000.0,frameDt*1000));
+}
+
+void toggleDisplayMode() { applyDisplayMode(displayFullscreen?1:0,windowedW,windowedH); }
+
+
+// Display preferences. Mode 0 = fullscreen, 1 = resizable window, 2 = maximized.
+final int[][] WINDOW_SIZES={{960,540},{1024,768},{1280,720},{1360,900},{1600,900},{1920,1080}};
+int displayModePref=START_FULLSCREEN?0:1,windowedW=1280,windowedH=720;
+int videoSel=0,videoMode=0,videoSize=2;
+boolean videoStartupPending=false;
+volatile boolean videoSavePending=false;
+int videoSaveAfter=0;
+
+void openVideoSettings() {
+  videoSel=0;videoMode=displayModePref;
+  long nearest=Long.MAX_VALUE;
+  for(int k=0;k<WINDOW_SIZES.length;k++) {
+    long d=(long)sq(WINDOW_SIZES[k][0]-windowedW)+(long)sq(WINDOW_SIZES[k][1]-windowedH);
+    if(d<nearest){nearest=d;videoSize=k;}
+  }
+  if(state==MENU)menuPageTo(3);else{pausePage=2;pauseSel=0;}
+}
+void closeVideoSettings() {
+  if(state==MENU){menuPageTo(0);menuSel=5;}
+  else{pausePage=0;pauseSel=2;}
+}
+void changeVideoSetting(int direction) {
+  if(videoSel==0)videoMode=(videoMode+direction+3)%3;
+  else if(videoSel==1){videoSize=(videoSize+direction+WINDOW_SIZES.length)%WINDOW_SIZES.length;videoMode=1;}
+}
+void activateVideoSetting() {
+  if(videoSel<2)changeVideoSetting(1);
+  else if(videoSel==2) {
+    windowedW=WINDOW_SIZES[videoSize][0];windowedH=WINDOW_SIZES[videoSize][1];
+    applyDisplayMode(videoMode,windowedW,windowedH);
+  } else closeVideoSettings();
+}
+void videoKey(int kc) {
+  if(kc==ESC||kc==BACKSPACE){closeVideoSettings();return;}
+  if(kc==UP||kc=='W')videoSel=(videoSel+3)%4;
+  else if(kc==DOWN||kc=='S')videoSel=(videoSel+1)%4;
+  else if(kc==LEFT||kc=='A')changeVideoSetting(-1);
+  else if(kc==RIGHT||kc=='D')changeVideoSetting(1);
+  else if(kc==ENTER||kc==RETURN||kc==' ')activateVideoSetting();
+}
+int videoHovered() {
+  if(uiMouseX()<60||uiMouseX()>1120)return -1;
+  for(int k=0;k<4;k++)if(abs(uiMouseY()-pauseOptY(k))<26)return k;
+  return -1;
+}
+void videoMouse(boolean click) {
+  int h=videoHovered();if(h<0)return;videoSel=h;
+  if(click){
+    if(h<2 && uiMouseX()<470)changeVideoSetting(-1);
+    else activateVideoSetting();
+  }
+}
+// Called inside the existing responsive logical UI transform.
+void drawVideoSettings() {
+  PGraphics p=viewGraphics();p.noStroke();p.textFont(fontBig);p.textSize(72);p.textAlign(LEFT,BASELINE);p.fill(235);p.text("VÍDEO",80,170);
+  String[] modes={"TELA CHEIA","JANELA REDIMENSIONÁVEL","JANELA MAXIMIZADA"};
+  String[] labels={"MODO","TAMANHO DA JANELA","APLICAR","VOLTAR"};
+  p.textFont(fontUI);p.textAlign(LEFT,CENTER);
+  for(int k=0;k<4;k++) {
+    boolean selected=videoSel==k;float y=pauseOptY(k);
+    p.fill(selected?255:140);p.textSize(30);p.text((selected?">> ":"    ")+labels[k],84,y);
+    if(k<2){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
+      String value=k==0?modes[videoMode]:min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100));
+      p.text("<  "+value+"  >",490,y);
+    }
+  }
+  p.textSize(17);p.fill(180);
+  p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(4)+14);
+  p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(4)+48);
+  if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(4)+90);}
+  p.fill(140);p.text("↑↓ escolher   ←→ ajustar   Enter confirmar   F9/F10 debug   F11 tela cheia   Esc voltar",84,uiHeight()-60);
+}
+void updateVideoPreferences() {
+  if(videoStartupPending){videoStartupPending=false;if(displayModePref!=0||!displayFullscreen)applyDisplayMode(displayModePref,windowedW,windowedH);}
+  if(videoSavePending && !displayModeChanging && millis()>=videoSaveAfter){videoSavePending=false;saveSettings();}
+}
+void applyDisplayMode(final int mode,int requestedW,int requestedH) {
+  if(win==null||displayModeChanging)return;
+  final int w=constrain(requestedW,640,max(640,displayWidth-80)),h=constrain(requestedH,360,max(360,displayHeight-100));
+  if(state==PLAYING&&!paused)pauseGame();
+  displayModeChanging=true;displayModePref=mode;displayFullscreen=mode==0;
+  windowedW=w;windowedH=h;
+  java.awt.EventQueue.invokeLater(new Runnable(){public void run(){
+    try {
+      if(mode==0){win.setMaximized(false,false);win.setUndecorated(true);win.setFullscreen(true);}
+      else{
+        if(win.isFullscreen())win.setFullscreen(false);
+        win.setUndecorated(false);win.setResizable(true);win.setMaximized(false,false);
+        win.setSize(w,h);win.setPosition(max(0,(displayWidth-w)/2),max(0,(displayHeight-h)/2));
+        if(mode==2)win.setMaximized(true,true);
+      }
+      displayW=-1;displaySettleUntil=millis()+250;videoSavePending=true;videoSaveAfter=millis()+600;
+    }finally{displayModeChanging=false;}
+  }});
+}
+
+
+// Developer-only visual laboratory. Set ENABLE_VISUAL_DEBUG=false near the top
+// to remove its input path. Overrides apply only while this panel is open.
+class VisualDebugControl {
+  String id,label;int page;float value,initial,low,high,step;
+  VisualDebugControl(String id,String label,int page,float initial,float low,float high,float step){
+    this.id=id;this.label=label;this.page=page;this.value=this.initial=initial;this.low=low;this.high=high;this.step=step;
+  }
+  boolean toggle(){return low==0&&high==1&&step==1;}
+  String display(){
+    if(toggle())return value>.5?"ON":"OFF";
+    if(id.equals("flash"))return value<0?"AUTO":value<.5?"OFF":"ON";
+    if(id.equals("danger")&&value<0)return "AUTO";
+    return nf(value,1,step>=1?0:step>=.05?2:3);
+  }
+}
+boolean visualDebugOpen=false,visualDebugBaseline=false,visualDebugKeyHeld=false,visualDebugWasPaused=false;
+int visualDebugPage=0,visualDebugRow=0,visualDebugPausePage,visualDebugPauseSel;
+String[] visualDebugPages={"PIPELINE","CAMERA","GRADE","LIGHTING"};
+ArrayList<VisualDebugControl> visualDebugControls=new ArrayList<VisualDebugControl>();
+HashMap<String,VisualDebugControl> visualDebugById=new HashMap<String,VisualDebugControl>();
+PGraphics visualDebugCard;
+
+void visualControl(String id,String label,int page,float initial,float low,float high,float step){
+  VisualDebugControl c=new VisualDebugControl(id,label,page,initial,low,high,step);visualDebugControls.add(c);visualDebugById.put(id,c);
+}
+void initVisualDebug(){
+  if(!visualDebugControls.isEmpty())return;
+  visualControl("card","Reference test card",0,0,0,1,1);
+  visualControl("lens","Optics / CCD / camera DSP",0,1,0,1,1);
+  visualControl("tape","Tape bandwidth pass",0,1,0,1,1);
+  visualControl("post","Grade / tape faults pass",0,1,0,1,1);
+  visualControl("codec","MPEG-style codec",0,1,0,1,1);
+  visualControl("osd","Camcorder OSD",0,1,0,1,1);
+  visualControl("hud","Gameplay HUD",0,1,0,1,1);
+  visualControl("danger","Danger preview (-1 = auto)",0,-1,-1,1,.1);
+  visualControl("hit","Hit flash preview",0,0,0,1,.05);
+  visualControl("quantizer","Codec quantizer multiplier",0,1,.25,4,.05);
+  visualControl("distortion","Lens distortion multiplier",1,1,0,2,.05);
+  visualControl("blur","Optical blur multiplier",1,1,0,4,.1);
+  visualControl("motion","Shutter blur multiplier",1,1,0,3,.1);
+  visualControl("ccdNoise","CCD noise multiplier",1,1,0,4,.1);
+  visualControl("smear","CCD vertical smear",1,1,0,4,.1);
+  visualControl("ghosts","Lens reflection ghosts",1,1,0,4,.1);
+  visualControl("glare","Veiling glare multiplier",1,1,0,4,.1);
+  visualControl("detail","Camera detail multiplier",1,1,0,3,.1);
+  visualControl("chroma","Tape chroma blur",1,3.2,.2,8,.1);
+  visualControl("luma","Tape luma blur",1,.28,.1,3,.05);
+  visualControl("saturation","Saturation",2,GRADE_SATURATION,0,3,.05);
+  visualControl("contrast","Contrast",2,GRADE_CONTRAST,-.5,1,.05);
+  visualControl("brightness","Brightness",2,GRADE_BRIGHTNESS,-.4,.4,.02);
+  visualControl("gamma","Gamma",2,GRADE_GAMMA,.4,2,.05);
+  visualControl("warmth","Extra warmth",2,0,-1,1,.05);
+  visualControl("vignette","Vignette",2,GRADE_VIGNETTE,0,1,.02);
+  visualControl("bloom","Bloom",2,GRADE_BLOOM,0,1,.02);
+  visualControl("halation","Halation",2,GRADE_HALATION,0,1,.02);
+  visualControl("tapeNoise","Tape noise",2,TAPE_NOISE,0,.08,.002);
+  visualControl("vhs","Tape faults / tracking",2,VHS_AMOUNT,0,1,.05);
+  visualControl("exposure","Exposure compensation (EV)",3,0,-3,3,.1);
+  visualControl("fog","Volumetric lighting",3,VOLUMETRIC?1:0,0,1,1);
+  visualControl("shadows","Dynamic wall shadows",3,1,0,1,1);
+  visualControl("bounce","Baked bounce lighting",3,1,0,1,1);
+  visualControl("ao","Contact darkening",3,1,0,1,1);
+  visualControl("wet","Show wet-patch mask",3,SHOW_WET_MASK?1:0,0,1,1);
+  visualControl("flash","Camera light (-1 = auto)",3,-1,-1,1,1);
+}
+float visualValue(String id,float normal){
+  if(!ENABLE_VISUAL_DEBUG||!visualDebugOpen||visualDebugBaseline)return normal;
+  VisualDebugControl c=visualDebugById.get(id);return c==null?normal:c.value;
+}
+float visualLensDistortion(){return visualValue("lens",1)<.5?0:visualValue("distortion",1);}
+float visualDanger(float normal){float value=visualValue("danger",-1);return value<0?normal:value;}
+float visualFlash(){float value=visualValue("flash",-1);return value<0?flashlightStrength():value;}
+ArrayList<VisualDebugControl> visualRows(){
+  ArrayList<VisualDebugControl> rows=new ArrayList<VisualDebugControl>();
+  for(VisualDebugControl c:visualDebugControls)if(c.page==visualDebugPage)rows.add(c);return rows;
+}
+void toggleVisualDebug(){
+  if(!ENABLE_VISUAL_DEBUG)return;
+  if(visualDebugOpen){closeVisualDebug();return;}
+  initVisualDebug();visualDebugWasPaused=paused;visualDebugPausePage=pausePage;visualDebugPauseSel=pauseSel;
+  if(state==PLAYING&&!paused)pauseGame();
+  visualDebugOpen=true;visualDebugBaseline=false;codecForceI=true;
+  releaseKeys();lockMouse(false);
+}
+void closeVisualDebug(){
+  visualDebugOpen=false;visualDebugBaseline=false;codecForceI=true;meterNext=0;
+  releaseKeys();lastMs=millis();
+  if(state==PLAYING){
+    if(visualDebugWasPaused){pausePage=visualDebugPausePage;pauseSel=visualDebugPauseSel;}
+    else if(focused)resumeGame(); // otherwise keep the existing focus-loss pause
+  }
+}
+void changeVisualControl(VisualDebugControl c,float value){
+  c.value=constrain(round(value/c.step)*c.step,c.low,c.high);codecForceI=true;
+}
+void resetVisualControls(boolean all){
+  for(VisualDebugControl c:visualDebugControls)if(all||c.page==visualDebugPage)c.value=c.initial;
+  visualDebugBaseline=false;codecForceI=true;
+}
+void visualDebugKey(int kc){
+  if(kc==ESC){closeVisualDebug();return;}
+  if(kc=='B'){visualDebugBaseline=true;codecForceI=true;return;}
+  if(kc=='P'){
+    println("// VISUAL DEBUG OVERRIDES (temporary preview values)");
+    for(VisualDebugControl c:visualDebugControls)println(c.id+" = "+c.value+";");return;
+  }
+  if(kc=='R'){resetVisualControls(keyEvent!=null&&keyEvent.isShiftDown());return;}
+  if(kc==TAB){visualDebugPage=(visualDebugPage+1)%visualDebugPages.length;visualDebugRow=0;return;}
+  ArrayList<VisualDebugControl> rows=visualRows();
+  if(kc==UP||kc=='W')visualDebugRow=(visualDebugRow+rows.size()-1)%rows.size();
+  else if(kc==DOWN||kc=='S')visualDebugRow=(visualDebugRow+1)%rows.size();
+  else if(kc==LEFT||kc=='A'||kc==RIGHT||kc=='D'||kc==ENTER||kc==RETURN||kc==' '){
+    VisualDebugControl c=rows.get(visualDebugRow);int direction=(kc==LEFT||kc=='A')?-1:1;
+    if(c.toggle())changeVisualControl(c,1-c.value);else changeVisualControl(c,c.value+direction*c.step);
+  }
+}
+void visualDebugMouse(boolean click,boolean drag){
+  float x=uiMouseX(),y=uiMouseY();
+  if(drag && x>560 && state==PLAYING){
+    yaw+=(mouseX-pmouseX)*MOUSE_SENS;pitch=constrain(pitch-(mouseY-pmouseY)*MOUSE_SENS,-1.2,1.2);
+    camDX=cos(yaw)*cos(pitch);camDY=sin(yaw)*cos(pitch);camDZ=sin(pitch);
+    cameraRightX=-sin(yaw);cameraRightY=cos(yaw);
+    updateFlashlight(0,camX,camY,camZ,camDX,camDY,camDZ);return;
+  }
+  if(click&&y>=102&&y<=136&&x>=20&&x<=540){visualDebugPage=constrain(int((x-20)/130),0,3);visualDebugRow=0;return;}
+  if(x<20||x>540)return;
+  ArrayList<VisualDebugControl> rows=visualRows();int row=floor((y-152)/45);
+  if(row>=0&&row<rows.size()){
+    visualDebugRow=row;VisualDebugControl c=rows.get(row);
+    if(click&&c.toggle())changeVisualControl(c,1-c.value);
+    else if((click||drag)&&!c.toggle())changeVisualControl(c,lerp(c.low,c.high,constrain((x-266)/250,0,1)));
+    return;
+  }
+  if(click&&y>=uiHeight()-133&&y<=uiHeight()-99){
+    if(x<188)resetVisualControls(false);else if(x<366)resetVisualControls(true);else closeVisualDebug();
+  }
+}
+void drawVisualDebugCard(){
+  int[] size=sceneSize(width,height,1);
+  if(visualDebugCard==null||visualDebugCard.width!=size[0]||visualDebugCard.height!=size[1]){
+    if(visualDebugCard!=null)visualDebugCard.dispose();visualDebugCard=createGraphics(size[0],size[1],P2D);visualDebugCard.noSmooth();codecForceI=true;
+  }
+  PGraphics p=visualDebugCard;p.beginDraw();p.blendMode(REPLACE);p.background(12);p.blendMode(BLEND);p.noStroke();
+  float w=p.width,h=p.height,ev=pow(2,visualValue("exposure",0));
+  int[] bars={color(230),color(240,225,20),color(20,220,220),color(20,220,35),color(210,30,220),color(230,25,20),color(25,40,230)};
+  for(int k=0;k<bars.length;k++){p.fill(bars[k]);p.rect(w*.42+k*w*.075,h*.08,w*.075+1,h*.18);}
+  for(int k=0;k<64;k++){p.fill(constrain(k*255/63.0*ev,0,255));p.rect(w*.43+k*w*.008,h*.32,w*.008+1,h*.16);}
+  for(int y=0;y<8;y++)for(int x=0;x<24;x++){p.fill((x+y)%2==0?220:20);p.rect(w*.43+x*w*.021,h*.56+y*h*.021,w*.021,h*.021);}
+  p.fill(255);p.rect(w*.71,h*.77,w*.15,h*.09);p.fill(2);p.rect(w*.49,h*.77,w*.15,h*.09);
+  float t=millis()/1000.0;p.fill(210,150,65);p.ellipse(w*(.69+.16*sin(t)),h*.94,w*.04,w*.04);
+  p.textFont(fontMono);p.fill(240);p.textSize(h*.027);p.text("CCD / TAPE / CODEC TEST CARD",w*.43,h*.045);
+  p.textSize(h*.022);p.text("Color / luma / edges / highlights / motion",w*.43,h*.525);
+  p.text("LIVE PREVIEW",w*.43,h*.9);
+  applyLensTo(p);applyTapeTo(p);applyPostTo(p,visualDanger(0),visualValue("hit",0));applyCodec(p);p.endDraw();
+  ((processing.opengl.PGraphicsOpenGL)viewGraphics()).beginPGL();((processing.opengl.PGraphicsOpenGL)viewGraphics()).endPGL();
+  begin2D();viewGraphics().pushStyle();viewGraphics().imageMode(CORNER);viewGraphics().noTint();viewGraphics().image(p,0,0,width,height);viewGraphics().popStyle();end2D();
+}
+void drawVisualDebug(){
+  VisualDebugControl card=visualDebugById.get("card");
+  if(state==PLAYING&&(card==null||card.value<.5))render();else drawVisualDebugCard();
+  begin2D();beginUi();PGraphics p=viewGraphics();p.pushStyle();p.rectMode(CORNER);p.noStroke();p.fill(9,12,14,244);p.rect(10,10,540,uiHeight()-20);
+  p.textFont(fontMono);p.textAlign(LEFT,TOP);p.fill(235,222,178);p.textSize(22);p.text("VISUAL DEBUG",24,24);
+  p.fill(visualDebugBaseline?color(125,235,165):color(165));p.textSize(12);p.text(visualDebugBaseline?"BASELINE: original settings (release B)":"Temporary overrides | gameplay is paused",24,57);
+  p.fill(135);p.text("Drag scene to look | hold B compare | P print",24,77);
+  for(int k=0;k<visualDebugPages.length;k++){
+    p.fill(k==visualDebugPage?color(85,77,48):color(32,37,40));p.rect(20+k*130,102,124,34);
+    p.fill(k==visualDebugPage?240:155);p.textSize(13);p.text(visualDebugPages[k],30+k*130,112);
+  }
+  ArrayList<VisualDebugControl> rows=visualRows();
+  for(int k=0;k<rows.size();k++){
+    VisualDebugControl c=rows.get(k);float y=152+k*45;
+    if(k==visualDebugRow){p.fill(235,215,150,24);p.rect(20,y-3,520,41);}
+    p.fill(k==visualDebugRow?240:180);p.textSize(12);p.text(c.label,28,y+2);
+    p.textAlign(RIGHT,TOP);p.fill(c.toggle()&&c.value<.5?100:220);p.text(c.display(),524,y+2);p.textAlign(LEFT,TOP);
+    if(!c.toggle()){p.fill(65);p.rect(266,y+24,250,3);p.fill(205,185,130);p.rect(266,y+24,250*(c.value-c.low)/max(c.high-c.low,.001),3);}
+  }
+  String[] actions={"RESET PAGE","RESET ALL","CLOSE"};
+  for(int k=0;k<3;k++){p.fill(44,47,48);p.rect(22+k*174,uiHeight()-133,164,34);p.fill(210);p.textSize(12);p.text(actions[k],34+k*174,uiHeight()-123);}
+  p.fill(155);p.textSize(12);p.text("Arrow keys adjust | Tab page | R reset page | Shift+R all",24,uiHeight()-85);
+  p.text("FPS "+nf(frameRate,1,1)+"   iris F"+nf(irisN,1,1)+"   gain "+nf(gainDbApplied,1,1)+" dB",24,uiHeight()-61);
+  p.text("Recording "+(sceneFrame==null?"test card":sceneFrame.width+" x "+sceneFrame.height)+" | ENABLE_VISUAL_DEBUG",24,uiHeight()-40);
+  p.popStyle();endUi();end2D();
 }
