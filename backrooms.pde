@@ -1,5 +1,4 @@
-// BACKROOMS: Escape from the Nerdolas — v1.3
-// Controls: Q/E lean, R taser, E certificate, G can; 1-5 use the displayed inventory slots.
+// BACKROOMS: Escape from the Nerdolas — v1.3a
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
@@ -282,7 +281,8 @@ int gameMode = FUGA;
 
 final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 final String[] MESES = {"JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"};
-final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "CATÁLOGO", "CONQUISTAS", "VÍDEO", "SAIR"};
+final String[] MENU_OPTS = {"POLIWEEK", "ENDLESS", "RECUPERAÇÃO", "POOLROOMS", "CATÁLOGO", "CONQUISTAS", "VÍDEO", "SAIR"};
+final int OPT_POOLS = 3;                      // menu index of the Poolrooms (state POOL lives in poolrooms.pde)
 final String[] CAT_TABS = {"NERDOLAS", "PICHAÇÕES", "ITENS", "ESTATÍSTICAS"};
 
 PImage[] faces = new PImage[NAMES.length];
@@ -1531,6 +1531,9 @@ void draw() {
     drawWin();
   } else if (state == EMAIL) {
     drawEmail();
+  } else if (state == POOL) {
+    updatePools(dt);
+    if (state == POOL) renderPools();
   } else {
     drawMenu();
   }
@@ -2061,6 +2064,7 @@ void spawnEnemies(int[] roster) {
 
 void goMenu() {
   if (state == PLAYING) endRun(false);
+  if (state == POOL) stopPools();
   state = MENU;
   menuPage = 0;
   lineShift = 0;
@@ -5996,9 +6000,10 @@ void drawMenuPreview() {
   } else if (menuSel == 2) {
     if (recupUnlocked) drawRecupPreview();
     else drawLockedPreview("???", "Valide 36h/36h na POLIWEEK para desbloquear.");
-  } else if (menuSel == 3) drawCataloguePreview();
-  else if (menuSel == 4) drawAchPreview();
-  else if(menuSel==5)drawLockedPreview("VÍDEO","Tela cheia, tamanho da janela e redimensionamento livre.");
+  } else if (menuSel == OPT_POOLS) drawPoolsPreview();
+  else if (menuSel == 4) drawCataloguePreview();
+  else if (menuSel == 5) drawAchPreview();
+  else if(menuSel==6)drawLockedPreview("VÍDEO","Tela cheia, tamanho da janela e redimensionamento livre.");
   else drawExitPreview();
   viewGraphics().popMatrix();
   //if (k < 1) drawSwitchStatic(width * 0.42, 0, width * 0.58, height, 1 - k);
@@ -6334,11 +6339,11 @@ void drawStatic() {
   }
 }
 
-float optY(int i) { return 386 + i * 52; }
+float optY(int i) { return 370 + i * 47; }
 
 int hoveredOption() {
   for (int i = 0; i < MENU_OPTS.length; i++)
-    if (uiMouseX() > 60 && uiMouseX() < 560 && abs(uiMouseY() - optY(i)) < 26) return i;
+    if (uiMouseX() > 60 && uiMouseX() < 560 && abs(uiMouseY() - optY(i)) < 23) return i;
   return -1;
 }
 
@@ -6372,7 +6377,7 @@ void drawMainMenu() {
     viewGraphics().textSize(34);
     viewGraphics().fill(locked ? (sel ? 150 : 70) : (sel ? 255 : 120));
     String label = (i == 2 && locked) ? "???" : MENU_OPTS[i];
-    if (i == 4) label += "  (" + achCountVisible() + "/" + achTotalVisible() + ")";
+    if (i == 5) label += "  (" + achCountVisible() + "/" + achTotalVisible() + ")";
     viewGraphics().text((sel ? ">> " : "    ") + label, 84, optY(i));
   }
 
@@ -6380,6 +6385,7 @@ void drawMainMenu() {
     "Acumule certificados de horas e encontre a SAÍDA.",
     endlessUnlocked ? "Sobreviva o máximo que puder." : "Vença a semana da POLIWEEK para desbloquear.",
     recupUnlocked ? "Todos eles. Nenhuma luz. Um certificado." : "Valide 36h/36h na POLIWEEK para desbloquear.",
+    "Exploração livre: piscinas, azulejos e luz do dia. Sem nerdolas.",
     "Nerdolas, pichações, itens e estatísticas.",
     "Veja suas conquistas.",
     "Tela cheia, tamanho da janela e redimensionamento livre.",
@@ -6606,11 +6612,13 @@ void activateMenu(int i) {
       return;
     }
     startRun(FUGA, RECUP_DAY);
-  } else if (i == 3) {
-    menuPageTo(2);
+  } else if (i == OPT_POOLS) {
+    startPools();
   } else if (i == 4) {
+    menuPageTo(2);
+  } else if (i == 5) {
     menuPageTo(1);
-  } else if(i==5){
+  } else if(i==6){
     openVideoSettings();
   } else {
     exit();
@@ -6899,7 +6907,9 @@ void mouseDragged() {
 }
 
 void look() {
-  if (state != PLAYING || paused) return;
+  if (state == POOL) {
+    if (!focused) return;
+  } else if (state != PLAYING || paused) return;
   if (skipMouse > 0) {
     skipMouse--;
     return;
@@ -7003,6 +7013,10 @@ void keyPressed() {
   boolean enter = kc == ENTER || kc == RETURN;
   if (state == MENU) {
     menuKey(kc);
+    return;
+  }
+  if (state == POOL) {
+    poolKey(kc);
     return;
   }
   if (state == PLAYING && paused) {
@@ -8456,6 +8470,7 @@ float exposureFromMeter(int[] pixels) {
   meterLuma=sceneLuma;
   float dim=constrain((log2(sceneLuma)-log2(0.003))/(log2(0.05)-log2(0.003)),0,1);
   float target=AE_TARGET*pow(2,AE_EV_COMP)*lerp(0.3,1,dim*dim*(3-2*dim));
+  if (state == POOL) target *= POOL_AE_BOOST;   // white tiles in daylight: the camera exposes brighter (poolrooms.pde)
   return constrain(target/max(sceneLuma,0.0001),aeMin(),aeMax());
 }
 
@@ -8564,6 +8579,7 @@ void applyLensTo(PGraphics target) {
   lens.set("vigNatural", LENS_VIG_NATURAL);
   lens.set("vigMech", LENS_VIG_MECH * constrain(1 - log2(N / LENS_F_MIN) / 2, 0, 1));
   lens.set("glare", LENS_GLARE * signal * visualValue("glare",1)); lens.set("ghost", LENS_GHOSTS * visualValue("ghosts",1)); lens.set("smear", CCD_SMEAR * visualValue("smear",1));
+  if (state == POOL) lens.set("ghost", 0.0);   // a bright white level mirrors whole walls as ghosts: off in the Poolrooms
   lens.set("gain", sensorGain); lens.set("fullWell",visualValue("ccdNoise",1)<=0?1e20:SENSOR_FULL_WELL/max(visualValue("ccdNoise",1),.001)); lens.set("readNoise", SENSOR_READ_NOISE * visualValue("ccdNoise",1));
   lens.set("hotRate", HOT_PIXELS * visualValue("ccdNoise",1)); lens.set("sensorRes", SENSOR_LINES * asp, (float)SENSOR_LINES);
   lens.set("wb", w.x, w.y, w.z);
@@ -8593,7 +8609,7 @@ PVector lensWarp(float x, float y) {
 void applyPost(float dg, float hit) { applyPostTo(viewGraphics(), dg, hit); }
 void applyPostTo(PGraphics target, float dg, float hit) {
   if(visualValue("post",1)<.5)return;dg=visualDanger(dg);hit=visualValue("hit",hit);
-  boolean footage = state == PLAYING || (ENABLE_VISUAL_DEBUG && visualDebugOpen);
+  boolean footage = state == PLAYING || state == POOL || (ENABLE_VISUAL_DEBUG && visualDebugOpen);
   post.set("time", millis() / 1000.0); post.set("danger", dg); post.set("hit", hit);
   post.set("gain", footage ? 0.0 : 0.3);
   post.set("tapeNoise", footage ? visualValue("tapeNoise",TAPE_NOISE) : 0.012);
@@ -8606,6 +8622,7 @@ void applyPostTo(PGraphics target, float dg, float hit) {
   else post.set("tint", 1.02, 1.0, 0.92);
   post.set("vignette", footage ? visualValue("vignette",GRADE_VIGNETTE) : 0.22);
   post.set("bloomAmt", footage ? visualValue("bloom",GRADE_BLOOM) : 0.35); post.set("halation", footage ? visualValue("halation",GRADE_HALATION) : 0.25);
+  if (state == POOL) poolGrade();     // the Poolrooms: neutral daylight grade (poolrooms.pde)
   target.filter(post);
 }
 
@@ -9240,7 +9257,7 @@ void updateDisplaySize() {
     videoSavePending=true;videoSaveAfter=millis()+750;
   }
   // Avoid treating the OS pointer recenter during a resize as a camera turn.
-  if(state==PLAYING && !paused && focused) { skipMouse=2; }
+  if(((state==PLAYING && !paused) || state==POOL) && focused) { skipMouse=2; }
 }
 
 int[] sceneSize(int w,int h,float quality) {
@@ -9320,7 +9337,7 @@ void openVideoSettings() {
   if(state==MENU)menuPageTo(3);else{pausePage=2;pauseSel=0;}
 }
 void closeVideoSettings() {
-  if(state==MENU){menuPageTo(0);menuSel=5;}
+  if(state==MENU){menuPageTo(0);menuSel=6;}
   else{pausePage=0;pauseSel=2;}
 }
 void changeVideoSetting(int direction) {
