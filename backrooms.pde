@@ -1,4 +1,5 @@
 // BACKROOMS: Escape from the Nerdolas — v1.3
+// Controls: Q/E lean, R taser, E certificate, G can; 1-5 use the displayed inventory slots.
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
@@ -70,7 +71,7 @@ final float LENS_ABERRATION_UM = 1.5;
 final float LENS_FIELD_SOFT = 0.0;
 final float OLPF_PX = 0.05;
 final float LENS_VIG_NATURAL = 0.35, LENS_VIG_MECH = 0.25;
-final float LENS_GLARE = 0.015, LENS_GHOSTS = 0.05;
+final float LENS_GLARE = 0.004, LENS_GHOSTS = 0.05;
 final float CAM_SHUTTER = 1 / 60.0;
 // Program AE: mechanical iris first, then automatic gain control (not a battery).
 final float AE_TARGET = 0.30, AE_EV_COMP = 0, AGC_MAX_DB = 6, AGC_STEP_DB = 0;
@@ -82,7 +83,7 @@ final boolean SHOW_EXPOSURE_OSD = true;
 final float SENSOR_FULL_WELL = 6000, SENSOR_READ_NOISE = 8;
 final float HOT_PIXELS = 0.0002, CCD_SMEAR = 0.04;
 final float CAM_WB_KELVIN = 6500, CAM_KNEE = 0.88, CAM_KNEE_SLOPE = 0.6;
-final float CAM_WHITE_CLIP = 1.0, CAM_PEDESTAL = 0.015;
+final float CAM_WHITE_CLIP = 1.0, CAM_PEDESTAL = 0.005;
 final float CAM_DETAIL = 0.45, CAM_DETAIL_CORING = 0.012, CAM_DETAIL_RADIUS = 1.0;
 // GPU simulation of an SD MPEG-2-style decoded copy (not a video file exporter).
 final boolean CODEC_ON = true;
@@ -1133,9 +1134,11 @@ String[] WORLD_FRAG = {
   "    }",
   "  }",
   "  vec3 ambient=debugNoBounce>0.5?vec3(0.0):albedo*surfaceBounce(wPos,gn,isLevel);",
-  "  if (isLevel && abs(gn.z)<0.5) {",
+  "  if (isLevel && abs(gn.z)<0.5 && debugNoBounce<0.5) {",
   "    float ceilingLift=smoothstep(0.62,1.0,wPos.z/wallH);",
-  "    ambient+=albedo*lampCol*" + WALL_CEILING_BOUNCE + "*ceilingLift;",
+  "    vec2 cuv=clamp((wPos.xy+gn.xy*20.0)/(gridSize*cellSize),vec2(0.5/giSize),vec2(1.0-0.5/giSize));",
+  "    vec3 ceil=decodeBounce(texture2D(giMap,vec2(cuv.x,0.5+cuv.y*0.5),-16.0).rgb)*texture2D(giDynamic,cuv).r;",
+  "    ambient+=albedo*ceil*" + WALL_CEILING_BOUNCE + "*ceilingLift*8.0;",
   "  }",
   "",
   "  vec3 receiver = vec3(a, wPos.z + gn.z * 2.0);",
@@ -8451,7 +8454,9 @@ float exposureFromMeter(int[] pixels) {
   }
   float sceneLuma=pow(2,sum/weights);
   meterLuma=sceneLuma;
-  return constrain(AE_TARGET*pow(2,AE_EV_COMP)/max(sceneLuma,0.0001),aeMin(),aeMax());
+  float dim=constrain((log2(sceneLuma)-log2(0.003))/(log2(0.05)-log2(0.003)),0,1);
+  float target=AE_TARGET*pow(2,AE_EV_COMP)*lerp(0.3,1,dim*dim*(3-2*dim));
+  return constrain(target/max(sceneLuma,0.0001),aeMin(),aeMax());
 }
 
 // =====================================================================
