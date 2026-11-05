@@ -5050,10 +5050,10 @@ void renderScene() {
   world.set("exposure", EXPOSURE_BASE * exposureAdapt * pow(2,visualValue("exposure",0)));
   world.set("fogDist", FOG_DIST);
   world.set("fogColor", 0.075 * haze, 0.068 * haze, 0.045 * haze);
-  world.set("volOn", visualValue("fog",VOLUMETRIC?1:0));
-  world.set("debugNoShadows",1-visualValue("shadows",1));
+  world.set("volOn", visualValue("fog",VOLUMETRIC&&!gfxLight()?1:0));
+  world.set("debugNoShadows",1-visualValue("shadows",gfxLight()?0:1));
   world.set("debugNoBounce",1-visualValue("bounce",1));
-  world.set("debugNoAO",1-visualValue("ao",1));
+  world.set("debugNoAO",1-visualValue("ao",gfxLight()?0:1));
   world.set("wetDebug", visualValue("wet",SHOW_WET_MASK?1:0));
   float fl = visualFlash();
   world.set("flash", FLASH_POWER * fl);
@@ -5082,7 +5082,7 @@ void renderScene() {
   drawPizzas();
   drawXray();
   drawViewModel3D();
-  meterCamera(viewGraphics());
+  poolMeterCamera(viewGraphics());   // async readback: the plain loadPixels() stalled every 125 ms
 
   begin2D();
   applyLens();                       // 1. optics, shutter, CCD and camera DSP
@@ -6931,6 +6931,7 @@ void loadSettings() {
     if(kv[0].equals("displayMode")){displayModePref=constrain(int(kv[1]),0,2);videoStartupPending=true;continue;}
     if(kv[0].equals("windowW")){windowedW=constrain(int(kv[1]),640,7680);continue;}
     if(kv[0].equals("windowH")){windowedH=constrain(int(kv[1]),360,4320);continue;}
+    if(kv[0].equals("gfx")){gfxQ=constrain(int(kv[1]),0,GFX_NAMES.length-1);continue;}
     if(!kv[0].equals("vol"))continue;
     String[] p = split(kv[1], ',');
     for (int k = 0; k < min(p.length, vol.length); k++) vol[k] = constrain(int(p[k].trim()), 0, 100);
@@ -6938,7 +6939,7 @@ void loadSettings() {
 }
 
 void saveSettings() {
-  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH});
+  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH,"gfx="+gfxQ});
 }
 
 // =====================================================================
@@ -9324,7 +9325,7 @@ void updateDisplaySize() {
 }
 
 int[] sceneSize(int w,int h,float quality) {
-  float fit=min(1,min(RENDER_MAX_HEIGHT/(float)max(1,h),RENDER_MAX_WIDTH/(float)max(1,w)));
+  float fit=min(1,min(RENDER_MAX_HEIGHT/(float)max(1,h),RENDER_MAX_WIDTH/(float)max(1,w)))*(gfxLight()?LIGHT_RENDER_SCALE:1);
   float minQuality=min(1,RENDER_MIN_HEIGHT/max(1,h*fit));
   fit*=constrain(quality,minQuality,1);
   return new int[]{max(16,round(w*fit)),max(16,round(h*fit))};
@@ -9356,10 +9357,55 @@ void tuneRenderResolution(float cost) {
   if(renderQuality!=previous){resolutionCooldown=millis()+4000;resolutionFrames=0;}
 }
 
+// GPU time of a Backrooms frame, from timestamp queries read back a few frames later without waiting.
+// The adaptive resolution needs it: render() returns long before the GPU is done, so CPU time saw ~2 ms.
+class FrameGpuTimer {
+  final int slots=6;
+  int[][] queries=new int[slots][2];
+  boolean[] pending=new boolean[slots];
+  int cursor,active=-1;
+  boolean initialized,supported;
+  float lastMs;
+  int[] ready={0};long[] result=new long[1];
+  com.jogamp.opengl.GL2ES2 gl(PGraphics target) {
+    return ((processing.opengl.PJOGL)target.beginPGL()).gl.getGL2ES2();
+  }
+  void begin(PGraphics display) {
+    com.jogamp.opengl.GL2ES2 gpu=gl(display);
+    try {
+      if(!initialized){
+        supported=gpu.isFunctionAvailable("glQueryCounter")&&gpu.isFunctionAvailable("glGetQueryObjectui64v");
+        if(supported)for(int[] ids:queries)gpu.glGenQueries(2,ids,0);
+        initialized=true;
+      }
+      if(!supported)return;
+      for(int slot=0;slot<slots;slot++)if(pending[slot]) {
+        gpu.glGetQueryObjectiv(queries[slot][1],com.jogamp.opengl.GL2ES2.GL_QUERY_RESULT_AVAILABLE,ready,0);
+        if(ready[0]==0)continue;
+        gpu.glGetQueryObjectui64v(queries[slot][0],com.jogamp.opengl.GL2ES2.GL_QUERY_RESULT,result,0);long start=result[0];
+        gpu.glGetQueryObjectui64v(queries[slot][1],com.jogamp.opengl.GL2ES2.GL_QUERY_RESULT,result,0);
+        float ms=(float)((result[0]-start)/1000000.0d);
+        if(ms>0&&ms<1000)lastMs=ms;
+        pending[slot]=false;
+      }
+      active=pending[cursor]?-1:cursor;
+      if(active>=0){gpu.glQueryCounter(queries[active][0],com.jogamp.opengl.GL2ES2.GL_TIMESTAMP);cursor=(cursor+1)%slots;}
+    } finally {display.endPGL();}
+  }
+  void end(PGraphics display) {
+    if(active<0)return;
+    com.jogamp.opengl.GL2ES2 gpu=gl(display);
+    try {gpu.glQueryCounter(queries[active][1],com.jogamp.opengl.GL2ES2.GL_TIMESTAMP);pending[active]=true;active=-1;}
+    finally {display.endPGL();}
+  }
+}
+FrameGpuTimer frameGpuTimer=new FrameGpuTimer();
+
 void render() {
   updateDisplaySize(); ensureSceneFrame();
   PGraphics display=viewGraphics(),previous=renderTarget; int screenW=display.width,screenH=display.height;
   long started=System.nanoTime();
+  frameGpuTimer.begin(display);
   sceneFrame.beginDraw();
   try {
     renderTarget=sceneFrame;
@@ -9374,9 +9420,11 @@ void render() {
   begin2D(); viewGraphics().pushStyle(); viewGraphics().imageMode(CORNER); viewGraphics().noTint(); viewGraphics().blendMode(REPLACE);
   viewGraphics().image(sceneFrame,0,0,width,height); viewGraphics().blendMode(BLEND); viewGraphics().popStyle();
   if(visualValue("hud",1)>.5)drawHUD(); end2D();
+  frameGpuTimer.end(display);
   // Swapping render targets resolves the recording before presentation. No
   // full-frame pixel readback, GPU fence or glFinish is introduced in gameplay.
-  tuneRenderResolution(max((System.nanoTime()-started)/1000000.0,frameDt*1000));
+  float cpuMs=(System.nanoTime()-started)/1000000.0;
+  tuneRenderResolution(frameGpuTimer.lastMs>0?max(frameGpuTimer.lastMs,cpuMs):max(cpuMs,frameDt*1000));
 }
 
 void toggleDisplayMode() { applyDisplayMode(displayFullscreen?1:0,windowedW,windowedH); }
@@ -9386,6 +9434,12 @@ void toggleDisplayMode() { applyDisplayMode(displayFullscreen?1:0,windowedW,wind
 final int[][] WINDOW_SIZES={{960,540},{1024,768},{1280,720},{1360,900},{1600,900},{1920,1080}};
 int displayModePref=START_FULLSCREEN?0:1,windowedW=1280,windowedH=720;
 int videoSel=0,videoMode=0,videoSize=2;
+// Graphics quality. LEVE drops the per-pixel shadow rays (lamps, camera light, fog), contact
+// darkening and volumetric light, and renders the scene at 80%: far lighter on the GPU.
+final String[] GFX_NAMES={"ALTA","LEVE"};
+final float LIGHT_RENDER_SCALE=0.8;
+int gfxQ=0;                                    // saved in settings.txt
+boolean gfxLight(){return gfxQ==1;}
 boolean videoStartupPending=false;
 volatile boolean videoSavePending=false;
 int videoSaveAfter=0;
@@ -9406,31 +9460,32 @@ void closeVideoSettings() {
 void changeVideoSetting(int direction) {
   if(videoSel==0)videoMode=(videoMode+direction+3)%3;
   else if(videoSel==1){videoSize=(videoSize+direction+WINDOW_SIZES.length)%WINDOW_SIZES.length;videoMode=1;}
+  else if(videoSel==2){gfxQ=(gfxQ+direction+GFX_NAMES.length)%GFX_NAMES.length;codecForceI=true;meterNext=0;saveSettings();}
 }
 void activateVideoSetting() {
-  if(videoSel<2)changeVideoSetting(1);
-  else if(videoSel==2) {
+  if(videoSel<3)changeVideoSetting(1);
+  else if(videoSel==3) {
     windowedW=WINDOW_SIZES[videoSize][0];windowedH=WINDOW_SIZES[videoSize][1];
     applyDisplayMode(videoMode,windowedW,windowedH);
   } else closeVideoSettings();
 }
 void videoKey(int kc) {
   if(kc==ESC||kc==BACKSPACE){closeVideoSettings();return;}
-  if(kc==UP||kc=='W')videoSel=(videoSel+3)%4;
-  else if(kc==DOWN||kc=='S')videoSel=(videoSel+1)%4;
+  if(kc==UP||kc=='W')videoSel=(videoSel+4)%5;
+  else if(kc==DOWN||kc=='S')videoSel=(videoSel+1)%5;
   else if(kc==LEFT||kc=='A')changeVideoSetting(-1);
   else if(kc==RIGHT||kc=='D')changeVideoSetting(1);
   else if(kc==ENTER||kc==RETURN||kc==' ')activateVideoSetting();
 }
 int videoHovered() {
   if(uiMouseX()<60||uiMouseX()>1120)return -1;
-  for(int k=0;k<4;k++)if(abs(uiMouseY()-pauseOptY(k))<26)return k;
+  for(int k=0;k<5;k++)if(abs(uiMouseY()-pauseOptY(k))<26)return k;
   return -1;
 }
 void videoMouse(boolean click) {
   int h=videoHovered();if(h<0)return;videoSel=h;
   if(click){
-    if(h<2 && uiMouseX()<470)changeVideoSetting(-1);
+    if(h<3 && uiMouseX()<470)changeVideoSetting(-1);
     else activateVideoSetting();
   }
 }
@@ -9438,20 +9493,25 @@ void videoMouse(boolean click) {
 void drawVideoSettings() {
   PGraphics p=viewGraphics();p.noStroke();p.textFont(fontBig);p.textSize(72);p.textAlign(LEFT,BASELINE);p.fill(235);p.text("VÍDEO",80,170);
   String[] modes={"TELA CHEIA","JANELA REDIMENSIONÁVEL","JANELA MAXIMIZADA"};
-  String[] labels={"MODO","TAMANHO DA JANELA","APLICAR","VOLTAR"};
+  String[] labels={"MODO","TAMANHO DA JANELA","QUALIDADE","APLICAR","VOLTAR"};
   p.textFont(fontUI);p.textAlign(LEFT,CENTER);
-  for(int k=0;k<4;k++) {
+  for(int k=0;k<5;k++) {
     boolean selected=videoSel==k;float y=pauseOptY(k);
     p.fill(selected?255:140);p.textSize(30);p.text((selected?">> ":"    ")+labels[k],84,y);
-    if(k<2){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
-      String value=k==0?modes[videoMode]:min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100));
+    if(k<3){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
+      String value=k==0?modes[videoMode]:k==1?min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100)):GFX_NAMES[gfxQ];
       p.text("<  "+value+"  >",490,y);
     }
   }
   p.textSize(17);p.fill(180);
-  p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(4)+14);
-  p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(4)+48);
-  if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(4)+90);}
+  if(videoSel==2){
+    p.text("LEVE desliga as sombras dinâmicas, o escurecimento dos cantos e a névoa de luz,",88,pauseOptY(5)+14);
+    p.text("e renderiza a cena em 80%. Bem mais leve para a placa de vídeo. Vale na hora.",88,pauseOptY(5)+48);
+  } else {
+    p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(5)+14);
+    p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(5)+48);
+  }
+  if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(5)+90);}
   p.fill(140);p.text("↑↓ escolher   ←→ ajustar   Enter confirmar   F9/F10 debug   F11 tela cheia   Esc voltar",84,uiHeight()-60);
 }
 void updateVideoPreferences() {

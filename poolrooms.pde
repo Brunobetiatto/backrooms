@@ -132,6 +132,7 @@ String[] POOL_COMMON = poolJoin(POOL_DATA_SAMPLING, new String[]{
   "uniform vec2 renderOrigin;",
   "uniform vec2 secOrigin;",
   "uniform vec2 secCapacity;",
+  "uniform float lite;",                      // graphics quality LEVE: primary surfaces shaded the cheap way
   "varying vec2 vUV;",
 
   "const float CS = " + CELL + ";",
@@ -929,7 +930,7 @@ String[] POOL_MAIN = {
   "    vec3 p = camPos + rd * t;",
   "    vec3 n;",
   "    float gl;",
-  "    col = shadeSurf(p, rd, mat, t, false, n, gl);",
+  "    col = shadeSurf(p, rd, mat, t, lite > 0.5, n, gl);",
   "    if (gl > 0.0) col += secSample(0.25, hazeC) * gl;",          // the mirror image in the glaze
   "  } else if (mat < -1.5 && tw < 100000.0) {",                   // the water: glint here, the rest from pass 1
   "    vec3 p = camPos + rd * tw;",
@@ -2080,6 +2081,7 @@ PGraphics poolLastScene;                      // the scene frame of the previous
 
 void poolCamera(PShader sh, int w, int h, PVector eye, PVector F, PVector R, PVector U, float tanY, float t, float expo, float[] wk) {
   poolSetScene(sh, t);
+  sh.set("lite", gfxLight() ? 1.0 : 0.0);
   sh.set("camPos", eye.x, eye.y, eye.z);
   sh.set("camF", F.x, F.y, F.z);
   sh.set("camR", R.x, R.y, R.z);
@@ -2114,7 +2116,8 @@ void drawPoolFrame(PGraphics buf, PVector eye, PVector F, PVector R, PVector U, 
 void drawPoolFrameRegion(PGraphics buf, int w, int h, PVector eye, PVector F, PVector R, PVector U, float tanY, float t, float expo, float[] wk) {
   poolDrawWidth = w; poolDrawHeight = h;
   poolUpdateHaze(eye);
-  int sw = max(16, w / 2), sh = max(16, h / 2);
+  int div = gfxLight() ? 3 : 2;                // LEVE: reflections/refractions at a third of the resolution
+  int sw = max(16, w / div), sh = max(16, h / div);
   int capacityW = max(16, buf.width / 2), capacityH = max(16, buf.height / 2);
   boolean prev = buf == poolPrevBuf;
   PGraphics sec = prev ? poolSecPrev : poolSecMain;
