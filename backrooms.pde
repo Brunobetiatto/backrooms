@@ -1,8 +1,9 @@
-// BACKROOMS: Escape from the Nerdolas — v1.3a
+// BACKROOMS: Escape from the Nerdolas — v1.4b
 // Processing 4 (P3D) + Minim. Assets: carpet.jpg wall.jpg roof.jpg menu.png ambiente.mp3
 //   gabriel / vitor / gustavo / isa / gaias / luca (.jpg + .mp3)
 //   optional: data/pucpr.png (any photo of the PUCPR campus, blurred automatically)
 //   optional: data/flashlight.mp3
+//   player footsteps: data/footsteps_concrete_1.wav (M4A original retained)
 // Save files: best.txt, best_fuga.txt, achievements.txt, progress.txt
 
 import ddf.minim.*;
@@ -41,7 +42,7 @@ final float PANEL_FRAME_WIDTH = 2.5; // 2.5 cm trim, flush within 8 mm of the ce
 // ---------------- camcorder mic wind ----------------
 final float MIC_WIND_GAIN   = 0.30;  // overall level into the FX bus
 final float MIC_WIND_BASS   = 1.35;  // housing resonance: 0 thin, 1 camcorder boom, 2 huge
-final float MIC_WIND_SPRINT_BASS = 1.2; // extra low-end resonance at full sprint
+final float MIC_WIND_SPRINT_BASS = 2.0; // extra low-end resonance at full sprint
 final float MIC_WIND_GUST   = 0.0;   // gust, mid, and high-frequency wind contribution
 final float MIC_WIND_DRIVE  = 0.0;   // disable preamp overload and gust crackle
 final float MIC_AGC_DUCK_DB = 9;     // how far the AGC pulls the room tone down under wind
@@ -306,6 +307,14 @@ Gain fxBus, voiceBus;
 Summer fxMix, voiceMix;
 Oscil hum, hum2, heart;
 Multiplier stepAmp, breathAmp, staticAmp;
+Sampler[] concreteSteps = new Sampler[2]; // independent left/right voices of recording 1
+final float PLAYER_FOOTSTEP_GAIN = 0.55; // quieter impacts, including their room reflection
+Pan[] concreteStepPans = new Pan[2];
+MoogFilter[] concreteStepFilters = new MoogFilter[2];
+java.util.Random footstepRandom = new java.util.Random();
+int concreteStepCount, lastConcreteStep = -1;
+float playerStepTravel = -1;
+Summer playerStepMix;
 MicWind micWind;
 float runAir = 0, windSwing = 0, windLastYaw, windLastPitch;
 Oscil[] sting = new Oscil[3];
@@ -1559,7 +1568,7 @@ void buildSynthGraph() {
   heart.patch(fxMix);
 
   stepAmp = new Multiplier(0);
-  new Noise(1, Noise.Tint.BROWN).patch(new MoogFilter(280, 0.25)).patch(stepAmp).patch(fxMix);
+  new Noise(1, Noise.Tint.BROWN).patch(new MoogFilter(280, 0.25)).patch(stepAmp);
   buildRunWhoosh();
   breathAmp = new Multiplier(0);
   new Noise(1, Noise.Tint.PINK).patch(new MoogFilter(1400, 0.15)).patch(breathAmp).patch(fxMix);
@@ -1595,10 +1604,15 @@ void buildSynthGraph() {
   achOsc = new Oscil(784, 0, Waves.TRIANGLE);
   achOsc.patch(fxMix);
 
-  // footstep echo: wetter and longer in open halls
-  stepEcho = new Delay(0.6, 0.3, true, false);
+  // A quiet early reflection adds space without repeating the whole footfall.
+  // Sum sources before splitting the dry/wet paths: Delay has only one audio input.
+  playerStepMix = new Summer();
+  stepAmp.patch(playerStepMix);
+  playerStepMix.patch(fxMix);
+  stepEcho = new Delay(0.08, 0.28, false, false);
   echoWet = new Multiplier(0);
-  stepAmp.patch(stepEcho).patch(echoWet).patch(fxMix);
+  playerStepMix.patch(stepEcho).patch(echoWet).patch(fxMix);
+  loadConcreteFootsteps();
 
   // the nerdolas' footsteps
   for (int k = 0; k < eSteps.length; k++) eSteps[k] = new Steps3D();
@@ -1613,6 +1627,55 @@ void buildSynthGraph() {
   distO = new Oscil(50, 0, Waves.SINE);
   distO.patch(distantMix);
   distLP.patch(distPan).patch(fxMix);
+}
+
+void loadConcreteFootsteps() {
+  // Only the first recording is used. Decode it once, then keep each foot's tail independent.
+  String file = "footsteps_concrete_1.wav";
+  if (!new File(dataPath(file)).exists()) return;
+  MultiChannelBuffer data = new MultiChannelBuffer(1, 1);
+  float rate = minim.loadFileIntoBuffer(file, data);
+  if (rate <= 0 || data.getBufferSize() <= 1) return;
+  for (int i = 0; i < concreteSteps.length; i++) {
+    Sampler sample = new Sampler(data, rate, 1);
+    concreteStepFilters[i] = new MoogFilter(5000, 0);
+    concreteStepPans[i] = new Pan(0);
+    sample.patch(concreteStepFilters[i]).patch(concreteStepPans[i]).patch(playerStepMix);
+    concreteSteps[concreteStepCount++] = sample;
+  }
+}
+
+boolean advancePlayerFootsteps(float distanceMoved) {
+  if (distanceMoved <= 0.001) return false; // pushing a wall is not a footfall
+  float stride = crouching ? 100 : (sprinting ? 150 : 130);
+  if (playerStepTravel < 0) playerStepTravel = stride * 0.5;
+  float travel = min(distanceMoved, stride); // no burst of catch-up sounds after a hitch
+  bobPhase += PI * travel / stride;
+  playerStepTravel += travel;
+  if (playerStepTravel < stride) return false;
+  playerStepTravel %= stride;
+  return true;
+}
+
+boolean playConcreteFootstep() {
+  if (concreteStepCount == 0) return false;
+  int index = (lastConcreteStep + 1) % concreteStepCount;
+  lastConcreteStep = index;
+  Sampler sample = concreteSteps[index];
+  float level = PLAYER_FOOTSTEP_GAIN * (state == POOL ? 0.62 : 0.42) * (crouching ? 0.3 : (sprinting ? 1.25 : 1));
+  sample.amplitude.setLastValue(level * (0.93 + 0.14 * footstepRandom.nextFloat()));
+  sample.rate.setLastValue((index == 0 ? 0.99 : 1.01) + (footstepRandom.nextFloat() - 0.5) * 0.024);
+  concreteStepPans[index].setPan((index == 0 ? -0.06 : 0.06) + (footstepRandom.nextFloat() - 0.5) * 0.02);
+  concreteStepFilters[index].frequency.setLastValue(state == POOL ? 5200 : 1600); // tile / carpet
+  sample.trigger();
+  return true;
+}
+
+void stopConcreteFootsteps() {
+  for (int i = 0; i < concreteStepCount; i++) {
+    concreteSteps[i].amplitude.setLastValue(0);
+    concreteSteps[i].stop();
+  }
 }
 
 void updateSynth(float dt, float dg) {
@@ -1706,6 +1769,7 @@ void triggerSting(Enemy e) {
 
 void silenceSynth() {
   silenceRunWhoosh();
+  stopConcreteFootsteps();
   hum.setAmplitude(0);
   hum2.setAmplitude(0);
   heart.setAmplitude(0);
@@ -2008,6 +2072,8 @@ void startRun(int mode, int entry) {
   peekOff.set(0, 0);
   peekL = peekR = null;
   lastStep = 0;
+  playerStepTravel = -1;
+  lastConcreteStep = -1;
   flicker = 1;
   flickerUntil = 0;
   moving = sprinting = crouching = false;
@@ -3676,11 +3742,8 @@ void update(float dt) {
     float nx = player.x + mx * step, ny = player.y + my * step;
     if (!hitsWall(nx, player.y)) player.x = nx;
     if (!hitsWall(player.x, ny)) player.y = ny;
-    bobPhase += dt * (crouching ? 6 : (sprinting ? 14 : 9));
-    int st = floor((bobPhase - HALF_PI) / PI);
-    if (st != lastStep) {
-      lastStep = st;
-      stepEnv = crouching ? 0.08 : (sprinting ? 0.6 : 0.35);
+    if (advancePlayerFootsteps(dist(px0, py0, player.x, player.y))) {
+      stepEnv = playConcreteFootstep() ? 0 : (crouching ? 0.08 : (sprinting ? 0.6 : 0.35));
     }
   } else {
     bobPhase = lerp(bobPhase, round(bobPhase / PI) * PI, 1 - exp(-dt * 8));
@@ -7240,9 +7303,9 @@ void updateEcho(float dt) {
   int pi = cellOf(player.x), pj = cellOf(player.y), opening = 0;
   for (int i = pi - 2; i <= pi + 2; i++) for (int j = pj - 2; j <= pj + 2; j++) if (!isWall(i, j) && lineOfSight(player.x, player.y, (i + 0.5) * CELL, (j + 0.5) * CELL)) opening++;
   roomOpen = lerp(roomOpen, opening / 25.0, 1 - exp(-dt * 2));
-  stepEcho.setDelTime(0.09 + 0.22 * roomOpen);
-  stepEcho.setDelAmp(0.2 + 0.35 * roomOpen);
-  echoWet.setValue(0.15 + 0.6 * sq(roomOpen));
+  stepEcho.setDelTime(0.028 + 0.025 * roomOpen);
+  stepEcho.setDelAmp(0.28);
+  echoWet.setValue(0.12 + 0.18 * sq(roomOpen));
 }
 
 
