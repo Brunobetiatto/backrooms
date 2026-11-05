@@ -1358,7 +1358,8 @@ void settings() {
 }
 
 void setup() {
-  frameRate(120);
+  loadFpsPreference();
+  frameRate(1000);       // once, uncapped: paceFrame() holds each frame to the chosen limit
   surface.setTitle("BACKROOMS: Escape from the Nerdolas");
   win = (GLWindow) surface.getNative();
   win.addKeyListener(new com.jogamp.newt.event.KeyListener() {
@@ -1380,6 +1381,10 @@ void setup() {
         visualDebugKeyHeld = false;
       }
     }
+  });
+  win.addMouseListener(new com.jogamp.newt.event.MouseAdapter() {
+    public void mouseMoved(com.jogamp.newt.event.MouseEvent event) { lookEvent(event.getX(), event.getY()); }
+    public void mouseDragged(com.jogamp.newt.event.MouseEvent event) { lookEvent(event.getX(), event.getY()); }
   });
   surface.setResizable(true);
   updateDisplaySize();
@@ -1518,12 +1523,14 @@ void flashClick() {
 }
 
 void draw() {
+  paceFrame();
   updateVideoPreferences();
   updateDisplaySize();
   int now = millis();
   float dt = min((now - lastMs) / 1000.0, 0.05);
   lastMs = now;
   frameDt = dt;
+  applyLook();
   if(ENABLE_VISUAL_DEBUG && visualDebugOpen){drawVisualDebug();tickUiAudio(dt);return;}
 
   if (state == PLAYING && !paused && !focused) pauseGame();   // alt-tab pauses
@@ -6932,6 +6939,7 @@ void loadSettings() {
     if(kv[0].equals("windowW")){windowedW=constrain(int(kv[1]),640,7680);continue;}
     if(kv[0].equals("windowH")){windowedH=constrain(int(kv[1]),360,4320);continue;}
     if(kv[0].equals("gfx")){gfxQ=constrain(int(kv[1]),0,GFX_NAMES.length-1);continue;}
+    if(kv[0].equals("fps")){fpsQ=constrain(int(kv[1]),0,FPS_NAMES.length-1);continue;}
     if(!kv[0].equals("vol"))continue;
     String[] p = split(kv[1], ',');
     for (int k = 0; k < min(p.length, vol.length); k++) vol[k] = constrain(int(p[k].trim()), 0, 100);
@@ -6939,7 +6947,7 @@ void loadSettings() {
 }
 
 void saveSettings() {
-  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH,"gfx="+gfxQ});
+  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH,"gfx="+gfxQ,"fps="+fpsQ});
 }
 
 // =====================================================================
@@ -6948,6 +6956,11 @@ void lockMouse(boolean on) {
   win.confinePointer(on);
   win.setPointerVisible(!on);
   if (on) {
+    synchronized (lookLock) {
+      lookLastX = Integer.MIN_VALUE;
+      lookWarpPending = true;
+      lookWarpAt = millis();
+    }
     win.warpPointer(width / 2, height / 2);
     skipMouse = 2;
   }
@@ -6970,19 +6983,73 @@ void mouseDragged() {
   look();
 }
 
-void look() {
-  if (state == POOL) {
-    if (!focused) return;
-  } else if (state != PLAYING || paused) return;
+// Mouse look. Processing queues mouseMoved() and replays the queue at the start of the next frame, and the
+// old code measured every queued event from the centre of the screen: a burst of events in one slow frame
+// counted the same motion several times, so the camera over-turned whenever the game stuttered. NEWT's own
+// pointer events arrive in order with our recentering, so each one adds only its step from the previous one;
+// the sum is applied once per frame (applyLook, at the top of draw).
+final Object lookLock = new Object();
+float lookAccX, lookAccY;
+int lookLastX = Integer.MIN_VALUE, lookLastY;
+boolean lookWarpPending;
+int lookWarpAt;
+
+boolean lookActive() {
+  return focused && ((state == PLAYING && !paused) || state == POOL) && !(ENABLE_VISUAL_DEBUG && visualDebugOpen);
+}
+
+// NEWT thread: one pointer event
+void lookEvent(int x, int y) {
+  synchronized (lookLock) {
+    if (!lookActive()) {
+      lookLastX = Integer.MIN_VALUE;
+      return;
+    }
+    int cx = width / 2, cy = height / 2;
+    if (lookWarpPending) {                       // skip what's left from before the recenter, and the recenter itself
+      if ((abs(x - cx) <= 1 && abs(y - cy) <= 1) || millis() - lookWarpAt > 100) {
+        lookWarpPending = false;
+        lookLastX = x;
+        lookLastY = y;
+      }
+      return;
+    }
+    if (lookLastX == Integer.MIN_VALUE) {
+      lookLastX = x;
+      lookLastY = y;
+      return;
+    }
+    lookAccX += x - lookLastX;
+    lookAccY += y - lookLastY;
+    lookLastX = x;
+    lookLastY = y;
+    if (abs(x - cx) > width / 4 || abs(y - cy) > height / 4) {   // recenter only near the edges
+      lookWarpPending = true;
+      lookWarpAt = millis();
+      win.warpPointer(cx, cy);
+    }
+  }
+}
+
+// game thread, once per frame
+void applyLook() {
+  float dx, dy;
+  synchronized (lookLock) {
+    dx = lookAccX;
+    dy = lookAccY;
+    lookAccX = lookAccY = 0;
+  }
+  if (!lookActive()) return;
   if (skipMouse > 0) {
     skipMouse--;
     return;
   }
-  float dx = mouseX - width / 2, dy = mouseY - height / 2;
-  if (dx == 0 && dy == 0) return;
   yaw += dx * MOUSE_SENS;
   pitch = constrain(pitch - dy * MOUSE_SENS, -1.2, 1.2);
-  win.warpPointer(width / 2, height / 2);
+}
+
+void look() {
+  // camera turning moved to lookEvent()/applyLook(); Processing's mouse callbacks only drive the menus
 }
 
 void mousePressed() {
@@ -9440,6 +9507,36 @@ final String[] GFX_NAMES={"ALTA","LEVE"};
 final float LIGHT_RENDER_SCALE=0.8;
 int gfxQ=0;                                    // saved in settings.txt
 boolean gfxLight(){return gfxQ==1;}
+// Frame cap. MONITOR follows the display's refresh rate: when the GPU keeps up it's the smoothest choice,
+// since any cap the monitor doesn't divide evenly shows frames for uneven times (judder).
+final String[] FPS_NAMES={"60","120","MONITOR"};
+int fpsQ=1;                                    // saved in settings.txt
+int monitorHzCache=-1;
+int monitorHz(){
+  if(monitorHzCache<0){
+    try{int r=java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDisplayMode().getRefreshRate();monitorHzCache=r>=24?r:60;}
+    catch(Exception e){monitorHzCache=60;}
+  }
+  return monitorHzCache;
+}
+int fpsCap(){return fpsQ==0?60:fpsQ==1?120:monitorHz();}
+String fpsLabel(int q){return q==2?"MONITOR ("+monitorHz()+" Hz)":FPS_NAMES[q];}
+// The cap is our own pacing, not Processing's frameRate(): changing that at runtime makes JOGL stall
+// for a second (or throw, off its thread), and its timer bursts frames to catch up after a slow one.
+long paceNext=0;
+void applyFrameRate(){paceNext=0;}
+void paceFrame(){
+  long period=(long)(1e9/fpsCap()),now=System.nanoTime();
+  if(paceNext==0||now-paceNext>period*2)paceNext=now;     // fell behind: start over, never burst to catch up
+  long wait=paceNext-now;
+  if(wait>2000000){try{Thread.sleep((wait-1500000)/1000000);}catch(InterruptedException e){}}
+  while(System.nanoTime()<paceNext)Thread.yield();         // the last ~1.5 ms spun: sleep() is too coarse
+  paceNext+=period;
+}
+void loadFpsPreference(){
+  if(!new File(sketchPath("settings.txt")).exists())return;
+  for(String line:loadStrings("settings.txt")){String[] kv=split(line.trim(),'=');if(kv.length>=2&&kv[0].equals("fps"))fpsQ=constrain(int(kv[1]),0,FPS_NAMES.length-1);}
+}
 boolean videoStartupPending=false;
 volatile boolean videoSavePending=false;
 int videoSaveAfter=0;
@@ -9461,31 +9558,32 @@ void changeVideoSetting(int direction) {
   if(videoSel==0)videoMode=(videoMode+direction+3)%3;
   else if(videoSel==1){videoSize=(videoSize+direction+WINDOW_SIZES.length)%WINDOW_SIZES.length;videoMode=1;}
   else if(videoSel==2){gfxQ=(gfxQ+direction+GFX_NAMES.length)%GFX_NAMES.length;codecForceI=true;meterNext=0;saveSettings();}
+  else if(videoSel==3){fpsQ=(fpsQ+direction+FPS_NAMES.length)%FPS_NAMES.length;applyFrameRate();saveSettings();}
 }
 void activateVideoSetting() {
-  if(videoSel<3)changeVideoSetting(1);
-  else if(videoSel==3) {
+  if(videoSel<4)changeVideoSetting(1);
+  else if(videoSel==4) {
     windowedW=WINDOW_SIZES[videoSize][0];windowedH=WINDOW_SIZES[videoSize][1];
     applyDisplayMode(videoMode,windowedW,windowedH);
   } else closeVideoSettings();
 }
 void videoKey(int kc) {
   if(kc==ESC||kc==BACKSPACE){closeVideoSettings();return;}
-  if(kc==UP||kc=='W')videoSel=(videoSel+4)%5;
-  else if(kc==DOWN||kc=='S')videoSel=(videoSel+1)%5;
+  if(kc==UP||kc=='W')videoSel=(videoSel+5)%6;
+  else if(kc==DOWN||kc=='S')videoSel=(videoSel+1)%6;
   else if(kc==LEFT||kc=='A')changeVideoSetting(-1);
   else if(kc==RIGHT||kc=='D')changeVideoSetting(1);
   else if(kc==ENTER||kc==RETURN||kc==' ')activateVideoSetting();
 }
 int videoHovered() {
   if(uiMouseX()<60||uiMouseX()>1120)return -1;
-  for(int k=0;k<5;k++)if(abs(uiMouseY()-pauseOptY(k))<26)return k;
+  for(int k=0;k<6;k++)if(abs(uiMouseY()-pauseOptY(k))<26)return k;
   return -1;
 }
 void videoMouse(boolean click) {
   int h=videoHovered();if(h<0)return;videoSel=h;
   if(click){
-    if(h<3 && uiMouseX()<470)changeVideoSetting(-1);
+    if(h<4 && uiMouseX()<470)changeVideoSetting(-1);
     else activateVideoSetting();
   }
 }
@@ -9493,25 +9591,28 @@ void videoMouse(boolean click) {
 void drawVideoSettings() {
   PGraphics p=viewGraphics();p.noStroke();p.textFont(fontBig);p.textSize(72);p.textAlign(LEFT,BASELINE);p.fill(235);p.text("VÍDEO",80,170);
   String[] modes={"TELA CHEIA","JANELA REDIMENSIONÁVEL","JANELA MAXIMIZADA"};
-  String[] labels={"MODO","TAMANHO DA JANELA","QUALIDADE","APLICAR","VOLTAR"};
+  String[] labels={"MODO","TAMANHO DA JANELA","QUALIDADE","LIMITE DE FPS","APLICAR","VOLTAR"};
   p.textFont(fontUI);p.textAlign(LEFT,CENTER);
-  for(int k=0;k<5;k++) {
+  for(int k=0;k<6;k++) {
     boolean selected=videoSel==k;float y=pauseOptY(k);
     p.fill(selected?255:140);p.textSize(30);p.text((selected?">> ":"    ")+labels[k],84,y);
-    if(k<3){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
-      String value=k==0?modes[videoMode]:k==1?min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100)):GFX_NAMES[gfxQ];
+    if(k<4){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
+      String value=k==0?modes[videoMode]:k==1?min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100)):k==2?GFX_NAMES[gfxQ]:fpsLabel(fpsQ);
       p.text("<  "+value+"  >",490,y);
     }
   }
   p.textSize(17);p.fill(180);
   if(videoSel==2){
-    p.text("LEVE desliga as sombras dinâmicas, o escurecimento dos cantos e a névoa de luz,",88,pauseOptY(5)+14);
-    p.text("e renderiza a cena em 80%. Bem mais leve para a placa de vídeo. Vale na hora.",88,pauseOptY(5)+48);
+    p.text("LEVE desliga as sombras dinâmicas, o escurecimento dos cantos e a névoa de luz,",88,pauseOptY(6)+14);
+    p.text("e renderiza a cena em 80%. Bem mais leve para a placa de vídeo. Vale na hora.",88,pauseOptY(6)+48);
+  } else if(videoSel==3){
+    p.text("MONITOR acompanha a taxa da sua tela e é o mais suave quando a placa aguenta.",88,pauseOptY(6)+14);
+    p.text("60 alivia a placa de vídeo. Se o jogo não alcança o limite, use QUALIDADE LEVE.",88,pauseOptY(6)+48);
   } else {
-    p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(5)+14);
-    p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(5)+48);
+    p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(6)+14);
+    p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(6)+48);
   }
-  if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(5)+90);}
+  if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(6)+90);}
   p.fill(140);p.text("↑↓ escolher   ←→ ajustar   Enter confirmar   F9/F10 debug   F11 tela cheia   Esc voltar",84,uiHeight()-60);
 }
 void updateVideoPreferences() {
