@@ -6958,8 +6958,6 @@ void lockMouse(boolean on) {
   if (on) {
     synchronized (lookLock) {
       lookLastX = Integer.MIN_VALUE;
-      lookWarpPending = true;
-      lookWarpAt = millis();
     }
     win.warpPointer(width / 2, height / 2);
     skipMouse = 2;
@@ -6991,8 +6989,6 @@ void mouseDragged() {
 final Object lookLock = new Object();
 float lookAccX, lookAccY;
 int lookLastX = Integer.MIN_VALUE, lookLastY;
-boolean lookWarpPending;
-int lookWarpAt;
 
 boolean lookActive() {
   return focused && ((state == PLAYING && !paused) || state == POOL) && !(ENABLE_VISUAL_DEBUG && visualDebugOpen);
@@ -7006,27 +7002,23 @@ void lookEvent(int x, int y) {
       return;
     }
     int cx = width / 2, cy = height / 2;
-    if (lookWarpPending) {                       // skip what's left from before the recenter, and the recenter itself
-      if ((abs(x - cx) <= 1 && abs(y - cy) <= 1) || millis() - lookWarpAt > 100) {
-        lookWarpPending = false;
-        lookLastX = x;
-        lookLastY = y;
-      }
-      return;
-    }
     if (lookLastX == Integer.MIN_VALUE) {
       lookLastX = x;
       lookLastY = y;
       return;
     }
-    lookAccX += x - lookLastX;
-    lookAccY += y - lookLastY;
+    int dx = x - lookLastX, dy = y - lookLastY;
+    // An event still carrying the position from before a recenter shows up as an impossible jump
+    // (a quarter of the screen in one event): drop it alone, without pausing the real motion around it.
+    if (abs(dx) > width / 4 || abs(dy) > height / 4) return;
+    lookAccX += dx;
+    lookAccY += dy;
     lookLastX = x;
     lookLastY = y;
     if (abs(x - cx) > width / 4 || abs(y - cy) > height / 4) {   // recenter only near the edges
-      lookWarpPending = true;
-      lookWarpAt = millis();
       win.warpPointer(cx, cy);
+      lookLastX = cx;
+      lookLastY = cy;
     }
   }
 }
