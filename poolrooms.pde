@@ -1,5 +1,5 @@
 // =====================================================================
-// POOLROOMS 
+// POOLROOMS
 // =====================================================================
 
 final int POOL = 5;                            // game state
@@ -21,7 +21,6 @@ final float POOL_HOLE_R    = 186;              // ceiling opening above the stai
 final float POOL_WATER_R   = 135;              // corner rounding of the water outline
 final float POOL_PREVIEW_EXPO = 2.6;          // fixed exposure of the menu polaroid (in game the camera auto exposes)
 final float POOL_AE_BOOST = 2.3;               // auto exposure target vs the Backrooms (+1.2 EV: a bright white place)
-final int   POOL_VEC4      = (POOL_GRID * POOL_GRID + 15) / 16;
 final int   P_DECK = 0, P_DEEP = 1, P_SHAL = 2;
 final int   F_NONE = 0, F_COLUMN = 1, F_STAIR = 2, F_LADDER = 3, F_SKY = 4;
 final int   R_LAP = 0, R_FLOOD = 1, R_LAGOON = 2, R_GALLERY = 3, R_BASIN = 4, R_STAIRS = 5, R_DRY = 6, R_UPPER = 7;
@@ -30,21 +29,26 @@ final PVector POOL_SUN = new PVector(0.40, 0.26, 0.88).normalize();
 
 int[][] pBase, pFeat, pStyle, pElev;           // pStyle: 0 wall, else 1 + heightClass * 4 + palette
 float[][] pLight;
-float[] poolMapU   = new float[POOL_VEC4 * 4];
-float[] poolLightU = new float[POOL_VEC4 * 4];
-float[] poolStyleU = new float[POOL_VEC4 * 4];
-float[] poolElevU  = new float[POOL_VEC4 * 4];
+PImage poolMapTex;                            // RGBA bytes: layout, light, style, elevation
 float[] poolWakes  = new float[16];
 final float[] NO_WAKES = new float[16];
 int wakeIdx;
-PShader poolSh, poolBright, poolBlur, poolBakeSh, poolSimSh;
+PShader poolSh, poolBright, poolBlur, poolBakeSh, poolSimSh, poolSecSh, poolHazeSh;
+PGraphics poolHazeA, poolHazeB;
+boolean poolHazeReady;
 PGraphics poolBuf, poolPrevBuf, poolBloomA, poolBloomB, poolBloomC, poolBloomD;
 PGraphics poolProbeA, poolProbeB;              // baked light, ping-pong (A = current)
 PGraphics poolSimA, poolSimB;                  // water height field, ping-pong (A = current)
-final int POOL_SIM_N = 768;                    // water simulation texels per side (~19 units each)
-final int POOL_BAKE_START = 56;                // bounce passes when a level is generated
-int poolBakePasses;
-float[] poolImp = new float[24];               // this frame's water impulses: x, y, radius, amplitude
+final int POOL_SIM_N = 2048;                    // water simulation texels per side (~19 units each)
+final int POOL_BAKE_START = 4;                 // small initial bake; convergence continues in slices
+final int POOL_BAKE_TOTAL = 96;                // converge lighting without tracing for the whole first minute
+final int POOL_BAKE_SLICES = 16;               // smaller optional slices fit beside gameplay rendering
+int poolBakePasses, poolBakeSlice;
+final double POOL_SIM_DT = 1.0d / 60.0d;      // coefficients below are calibrated for 60 Hz
+final int POOL_SIM_MAX_STEPS = 3;              // cap catch-up after a stall
+double poolSimAccumulator;
+float[] poolFlow = new float[4];               // continuous wading force, sampled once per simulation tick
+float[] poolImp = new float[24];               // queued event impulses: x, y, radius, amplitude
 PVector poolHaze = new PVector(0.4, 0.4, 0.4);
 int poolImpN;
 float poolDripT;
@@ -72,16 +76,37 @@ String[] POOL_VERT = {
   "}"
 };
 
-String[] POOL_COMMON = {
+// Raw GPU data must not derive a mip level inside divergent raymarch/cache branches.
+// Use explicit LOD 0 on desktop and ES implementations that expose the operation.
+String[] POOL_DATA_SAMPLING = {
+  "#ifdef GL_ES",
+  "#ifdef GL_EXT_shader_texture_lod",
+  "#extension GL_EXT_shader_texture_lod : enable",
+  "#endif",
+  "precision highp float;",
+  "#else",
+  "#ifdef GL_ARB_shader_texture_lod",
+  "#extension GL_ARB_shader_texture_lod : enable",
+  "#endif",
+  "#endif",
+  "#if __VERSION__ >= 130",
+  "#define poolDataFetch(s, uv) textureLod(s, uv, 0.0)",
+  "#elif defined(GL_ES) && defined(GL_EXT_shader_texture_lod)",
+  "#define poolDataFetch(s, uv) texture2DLodEXT(s, uv, 0.0)",
+  "#elif defined(GL_ARB_shader_texture_lod)",
+  "#define poolDataFetch(s, uv) texture2DLod(s, uv, 0.0)",
+  "#else",
+  "#define poolDataFetch(s, uv) texture2D(s, uv)",
+  "#endif"
+};
+
+String[] POOL_COMMON = poolJoin(POOL_DATA_SAMPLING, new String[]{
   "#define PROCESSING_TEXTURE_SHADER",
   "#ifdef GL_ES",
   "precision highp float;",
   "#endif",
   "uniform sampler2D texture;",
-  "uniform vec4 mapData[" + POOL_VEC4 + "];",
-  "uniform vec4 lightData[" + POOL_VEC4 + "];",
-  "uniform vec4 styleData[" + POOL_VEC4 + "];",
-  "uniform vec4 elevData[" + POOL_VEC4 + "];",
+  "uniform sampler2D mapTex;",
   "uniform float gridSize;",
   "uniform float time;",
   "uniform vec3 camPos;",
@@ -100,7 +125,13 @@ String[] POOL_COMMON = {
   "uniform sampler2D waterSim;",              // the simulated water height field (see POOL_SIM)
   "uniform float simN;",
   "uniform float simScale;",
-  "uniform vec3 hazeCol;",
+  "uniform sampler2D hazeTex;",               // one GPU texel, never a synchronous probe readback
+  "uniform sampler2D secTex;",                // pass 1: reflections and refractions at half resolution
+  "uniform vec2 secSize;",
+  "uniform vec2 bufSize;",
+  "uniform vec2 renderOrigin;",
+  "uniform vec2 secOrigin;",
+  "uniform vec2 secCapacity;",
   "varying vec2 vUV;",
 
   "const float CS = " + CELL + ";",
@@ -149,38 +180,16 @@ String[] POOL_COMMON = {
   "float sdExt(float a, float b) { return length(max(vec2(a, b), 0.0)) + min(max(a, b), 0.0); }",
   "vec3 aces(vec3 x) { return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }",
 
-  // ---- packed grids (4 cells per float, base 17)
-  "float unpack(vec4 v4, float idx) {",
-  "  float fi = floor(idx * 0.25 + 0.01);",
-  "  float sub = idx - fi * 4.0;",
-  "  float r = fi - floor(fi * 0.25 + 0.01) * 4.0;",
-  "  float v = r < 0.5 ? v4.x : (r < 1.5 ? v4.y : (r < 2.5 ? v4.z : v4.w));",
-  "  float base = sub < 0.5 ? 1.0 : (sub < 1.5 ? 17.0 : (sub < 2.5 ? 289.0 : 4913.0));",
-  "  float hi = floor((v + 0.5) / base);",
-  "  return hi - 17.0 * floor((hi + 0.5) / 17.0);",
-  "}",
+  // ---- one exact RGBA8 texel per cell; CPU row j maps to texture row j
   "bool outside(vec2 c) { return c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize; }",
-  "float codeAt(vec2 c) {",
-  "  if (outside(c)) return 0.0;",
-  "  float idx = c.y * gridSize + c.x;",
-  "  return unpack(mapData[int(floor(idx * 0.0625 + 0.001))], idx);",
+  "vec4 cellData(vec2 c) {",
+  "  if (outside(c)) return vec4(0.0);",
+  "  return floor(poolDataFetch(mapTex, (c + 0.5) / gridSize) * 255.0 + 0.5);",
   "}",
-  "float styleAt(vec2 c) {",
-  "  if (outside(c)) return 0.0;",
-  "  float idx = c.y * gridSize + c.x;",
-  "  return unpack(styleData[int(floor(idx * 0.0625 + 0.001))], idx);",
-  "}",
-  "float elevAt(vec2 c) {",
-  "  if (outside(c)) return 0.0;",
-  "  float idx = c.y * gridSize + c.x;",
-  "  return unpack(elevData[int(floor(idx * 0.0625 + 0.001))], idx);",
-  "}",
-  "float lightAt(vec2 c) {",
-  "  if (outside(c)) return -1.0;",
-  "  float idx = c.y * gridSize + c.x;",
-  "  float v = unpack(lightData[int(floor(idx * 0.0625 + 0.001))], idx);",
-  "  return v < 0.5 ? -1.0 : (v - 1.0) / 15.0;",
-  "}",
+  "float codeAt(vec2 c) { return cellData(c).r; }",
+  "float styleAt(vec2 c) { return cellData(c).b; }",
+  "float elevAt(vec2 c) { return cellData(c).a; }",
+  "float lightAt(vec2 c) { float v = cellData(c).g; return v < 0.5 ? -1.0 : (v - 1.0) / 15.0; }",
   // code 0 = wall; otherwise code-1 = base + 3*feature
   "float baseOf(float c) { return mod(c - 1.0, 3.0); }",
   "float featOf(float c) { return floor((c - 1.0) / 3.0 + 0.01); }",
@@ -210,23 +219,29 @@ String[] POOL_COMMON = {
   "bool gHi = false;",                                           // any raised floor or ramp in the 3x3
   "bool gWet = false;",                                       // any water / deep water in the 3x3: the outline work is skipped otherwise
   "bool gDeep = false;",
+  "bool gSimple = false;",                    // exact planar interior: no rounded boundaries or local features
   "void loadCell(vec2 c) {",
   "  if (c.x == gC.x && c.y == gC.y) return;",
   "  gC = c;",
   "  gHi = false;",
   "  gWet = false;",
   "  gDeep = false;",
+  "  vec4 center = cellData(c);",
+  "  float centerBase = baseOf(center.r);",
+  "  gSimple = center.r > 0.5 && featOf(center.r) < 0.5 && center.a == 1.0 && !vaultS(center.b);",
   "  for (int j = zeroI; j < 3; j++) {",
   "    for (int i = zeroI; i < 3; i++) {",
   "      vec2 q = c + vec2(float(i - 1), float(j - 1));",
   "      int k = j * 3 + i;",
-  "      gN[k] = codeAt(q);",
-  "      gS[k] = styleAt(q);",
+  "      vec4 data = k == 4 ? center : cellData(q);",
+  "      gN[k] = data.r;",
+  "      gS[k] = data.b;",
   "      gH[k] = hOf(gS[k]);",
-  "      gE[k] = elevAt(q);",
+  "      gE[k] = data.a;",
   "      if (gE[k] > 1.5) gHi = true;",
   "      if (isWet(gN[k])) gWet = true;",
   "      if (isDeepC(gN[k])) gDeep = true;",
+  "      if (data.r < 0.5 || data.a != 1.0 || baseOf(data.r) != centerBase || vaultS(data.b) || hOf(data.b) < hOf(center.b) - 1.0) gSimple = false;",
   "    }",
   "  }",
   "}",
@@ -312,6 +327,12 @@ String[] POOL_COMMON = {
   "  vec2 lp = p.xy - (c + 0.5) * CS;",
   "  float z = p.z;",
   "  float self = gN[4];",
+  "  if (gSimple) {",
+  "    float base = baseOf(self);",
+  "    gWD = base > 0.5 ? -100000.0 : 100000.0;",
+  "    float floorZ = base < 0.5 ? 0.0 : (base < 1.5 ? DEEP : SHAL);",
+  "    return vec2(smin(z - floorZ, gH[4] - z, 18.0), 1.0);",
+  "  }",
   "  if (self < 0.5) {",
   "    float od = 100000.0;",
   "    for (int j = zeroI; j < 3; j++) {",
@@ -397,7 +418,7 @@ String[] POOL_COMMON = {
   "      gfl = min(gfl, sdExt(sdBox2(o, vec2(HC)), (z - f) * (gE[k] > 2.5 ? 0.92 : 1.0)));",
   "    }",
   "  }",
-  "  float ground = gWet ? smax(gfl, -cav, 4.0) : gfl;",          // no water anywhere near: no cavities to cut
+  "  float ground = gWet ? smax(gfl, -cav, 12.0) : gfl;",         // rounded ceramic coping, shared by every neighboring cell
   "  float ceilD = smax(hS - z, -holeD(lp, self, c), 12.0);",
   "  float room = smin(wallD, ceilD, 34.0);",
   "  if (vS) {",                                               // barrel vault; two crossing barrels at bends and junctions
@@ -408,7 +429,7 @@ String[] POOL_COMMON = {
   "    room = min(room, (ox && oy) ? max(bx, by) : (ox ? bx : by));",
   "  }",
   "  room = min(room, nbS);",
-  "  float d = smin(room, ground, 10.0);",
+  "  float d = smin(room, ground, 18.0);",                       // continuous floor/wall cove
   "  if (gE[4] > 1.5) {",                                       // tiled parapets along every drop of a raised floor
   "    float fp = fH(gE[4], lp);",
   "    for (int k = zeroI; k < 4; k++) {",
@@ -418,7 +439,7 @@ String[] POOL_COMMON = {
   "      if (fH(gE[4], dir * HC) < fH(gE[idx], -dir * HC) + 20.0) continue;",
   "      float a = dot(lp, dir);",
   "      float b = dot(lp, vec2(-dir.y, dir.x));",
-  "      float pd = max(max(abs(a - (HC - 13.0)) - 9.0, abs(b) - HC), z - (fp + 92.0));",
+  "      float pd = smax(max(abs(a - (HC - 13.0)) - 9.0, abs(b) - HC), z - (fp + 92.0), 8.0);",
   "      d = min(d, pd);",
   "    }",
   "  }",
@@ -479,7 +500,9 @@ String[] POOL_COMMON = {
   "  vec3 n = vec3(0.0);",
   "  for (int i = zeroI; i < 4; i++) {",                       // tetrahedral differences, as a loop: one map() copy
   "    vec3 e = i == 0 ? vec3(0.5, -0.5, -0.5) : (i == 1 ? vec3(-0.5, -0.5, 0.5) : (i == 2 ? vec3(-0.5, 0.5, -0.5) : vec3(0.5)));",
-  "    n += e * map(p + e).x;",
+  // Only the exposed side defines a visible surface. Interior cell-local distance
+  // estimates can have different depths at a join, which must not tilt its normal.
+  "    n += e * max(map(p + e).x, 0.0);",
   "  }",
   "  float ln = length(n);",
   "  return (ln > 1e-6 && ln == ln) ? n / ln : vec3(0.0, 0.0, 1.0);",   // never a NaN normal (it would poison reflections)
@@ -525,13 +548,13 @@ String[] POOL_COMMON = {
   "  float res = 1.0;",
   "  float t = 3.0;",
   "  vec3 o = p + n * 1.5;",
-  "  for (int i = zeroI; i < 48; i++) {",
+  "  for (int i = zeroI; i < 30; i++) {",
   "    vec3 q = o + sunDir * t;",
   "    float h = map(q).x;",
   "    if (gN[4] > 0.5 && q.z > gH[4] - 2.0 && h > 0.0) break;",
   "    res = min(res, 10.0 * h / t);",
   "    if (res < 0.02) return 0.0;",
-  "    t += clamp(min(h, cellExit(q, sunDir) + 0.5), 1.5, 160.0);",
+  "    t += clamp(min(h, cellExit(q, sunDir) + 0.5), 2.5, 200.0);",
   "  }",
   "  return g * smoothstep(0.0, 1.0, res);",
   "}",
@@ -602,7 +625,7 @@ String[] POOL_COMMON = {
   "  return vec3((c + 0.5) * CS + off, f + 35.0 + k * max(h - f - 70.0, 0.0) * 0.5);",
   "}",
   "vec3 probeFetch(vec2 c, float k, float face) {",
-  "  vec3 e = texture2D(probes, (vec2(c.x * 6.0 + face, c.y * 3.0 + k) + 0.5) / probeTex, -16.0).rgb;",   // -16: always the exact texel (the lookup jumps between cells, which would pick a blurry mip and draw dotted lines)
+  "  vec3 e = poolDataFetch(probes, (vec2(c.x * 6.0 + face, c.y * 3.0 + k) + 0.5) / probeTex).rgb;",   // explicit LOD: discontinuous probe coordinates must not derive a mip level
   "  return -2.0 * log(max(vec3(1.0) - e, vec3(0.002)));",
   "}",
   "vec3 probeCube(vec2 c, float k, vec3 n) {",
@@ -630,7 +653,8 @@ String[] POOL_COMMON = {
   "    for (int i = zeroI; i < 2; i++) {",
   "      vec2 sel = mod(vec2(float(i), float(j)) + par, 2.0);",   // 0: this slot is c0, 1: it is c0 + 1
   "      vec2 c = c0 + sel;",
-  "      if (codeAt(c) < 0.5) continue;",
+  "      float code = codeAt(c);",
+  "      if (code < 0.5) continue;",
   "      float fl = fH(elevAt(c), vec2(0.0));",
   "      float span = max(hOf(styleAt(c)) - fl - 70.0, 1.0) * 0.5;",
   "      float lv = clamp((p.z - fl - 35.0) / span, 0.0, 1.999);",
@@ -638,7 +662,8 @@ String[] POOL_COMMON = {
   "      float wA = k0 < 0.5 ? 1.0 - (lv - k0) : lv - k0;",      // weight of the even level (0 or 2); level 1 is the odd slot
   "      vec3 e = probeCube(c, k0 + mod(k0, 2.0), n) * wA + probeCube(c, 1.0, n) * (1.0 - wA);",
   "      float ww = (sel.x > 0.5 ? f.x : 1.0 - f.x) * (sel.y > 0.5 ? f.y : 1.0 - f.y) + 0.0001;",
-  "      vec3 dp = probePos(c, k0) - p;",
+  "      vec2 poff = (isFeat(code, 1.0) || isFeat(code, 2.0)) ? vec2(115.0, 115.0) : vec2(0.0);",   // = probePos, without re-reading the cell
+  "      vec3 dp = vec3((c + 0.5) * CS + poff, fl + 35.0 + k0 * span) - p;",
   "      ww *= 0.2 + 0.8 * smoothstep(-0.3, 0.2, dot(dp, n) / (length(dp) + 1.0));",
   "      s += e * ww;",
   "      w += ww;",
@@ -649,7 +674,7 @@ String[] POOL_COMMON = {
 
   // ---- the water simulation: a height field (16 bits in RG) over the whole level, stepped on the GPU
   "float simTexel(vec2 t) {",
-  "  vec4 v = floor(texture2D(waterSim, (t + 0.5) / simN, -16.0) * 255.0 + 0.5);",
+  "  vec4 v = floor(poolDataFetch(waterSim, (t + 0.5) / simN) * 255.0 + 0.5);",
   "  return ((v.r * 256.0 + v.g) / 65535.0 - 0.5) * 8.0;",
   "}",
   "float simH(vec2 xy) {",
@@ -663,14 +688,14 @@ String[] POOL_COMMON = {
   "  return vec2(simH(xy + vec2(e, 0.0)) - simH(xy - vec2(e, 0.0)), simH(xy + vec2(0.0, e)) - simH(xy - vec2(0.0, e))) / (2.0 * e);",
   "}",
   // light focused by the simulated surface: curvature concentrates it (bright rings around your wake)
-  "float simFocus(vec2 xy) {",
-  "  float e = 1.0 / simScale;",
-  "  float l = simH(xy + vec2(e, 0.0)) + simH(xy - vec2(e, 0.0)) + simH(xy + vec2(0.0, e)) + simH(xy - vec2(0.0, e)) - 4.0 * simH(xy);",
+  "float simFocus(vec2 xy) {",                                      // 5 texel taps (was 5 bilinear = 20)
+  "  vec2 t = floor(xy * simScale);",
+  "  float l = simTexel(t + vec2(1.0, 0.0)) + simTexel(t - vec2(1.0, 0.0)) + simTexel(t + vec2(0.0, 1.0)) + simTexel(t - vec2(0.0, 1.0)) - 4.0 * simTexel(t);",
   "  return clamp(1.0 - l * 5.0, 0.15, 3.0);",
   "}"
-};
+});
 
-String[] POOL_MAIN = {
+String[] POOL_FUNCS = {
   // ---- water surface normal: the simulated height field + faint capillary ripples, filtered with distance
   "vec3 waterN(vec2 xy, float t) {",
   "  float fw = t * pixAng;",
@@ -696,17 +721,27 @@ String[] POOL_MAIN = {
   "}",
 
   // ---- tiles: x = grout amount (antialiased, fades to its average far away), y = per-tile variation
-  "vec2 tileAt(vec2 uv, float size, float fw) {",
+  // fw2 = the pixel footprint along each tile axis. At a glancing angle the footprint stretches along the view
+  // only, so each family of grout lines gets its own antialiasing (one shared width left the lines running
+  // across the view sub-pixel and dashed).
+  "vec2 tileAt(vec2 uv, float size, vec2 fw2) {",
   "  vec2 f = fract(uv / size);",
   "  vec2 e2 = min(f, 1.0 - f) * size;",
-  "  float e = min(e2.x, e2.y);",
   "  float w = 0.7;",
-  "  float aa = max(fw * 0.7, 0.3);",
-  "  float line = 1.0 - smoothstep(w - aa, w + aa, e);",
-  "  float cov = 1.0 - pow(1.0 - 2.0 * w / size, 2.0);",
-  "  float fade = smoothstep(size * 0.15, size * 0.6, fw);",
-  "  return vec2(mix(line, cov, fade), mix(hash2(floor(uv / size)), 0.5, fade));",
+  "  vec2 aa = max(fw2 * 0.7, vec2(0.3));",
+  "  vec2 ln = 1.0 - smoothstep(vec2(w) - aa, vec2(w) + aa, e2);",
+  "  vec2 fade = smoothstep(vec2(size * 0.15), vec2(size * 0.6), fw2);",
+  "  ln = mix(ln, vec2(2.0 * w / size), fade);",
+  "  float fm = max(fade.x, fade.y);",
+  "  return vec2(1.0 - (1.0 - ln.x) * (1.0 - ln.y), mix(hash2(floor(uv / size)), 0.5, fm));",
   "}",
+  // the footprint frame of the point being shaded (set by shadeSurf): along the view projected on the surface
+  // the pixel covers t*pixAng/cos, across it t*pixAng
+  "vec3 gDp = vec3(1.0, 0.0, 0.0);",
+  "vec3 gDq = vec3(0.0, 1.0, 0.0);",
+  "float gNr = 1.0;",
+  "float gFt = 1.0;",
+  "float footOf(vec3 a) { float u = dot(a, gDp); float v = dot(a, gDq); return gFt * sqrt(u * u / gNr + v * v); }",
   // the surface of each tile, in its tangent plane: never quite coplanar with its neighbours, a slightly wavy
   // glaze, and edges that round off into the grout. This is what breaks the reflections up like real tiles.
   "vec2 tileTilt(vec2 uv, float size, float fw) {",
@@ -718,6 +753,16 @@ String[] POOL_MAIN = {
   "  vec2 bev = sign(f) * smoothstep(0.5 - b * 1.8, 0.5, abs(f)) * 0.6;",
   "  return (tilt + wav) * (1.0 - smoothstep(size * 2.0, size * 8.0, fw)) + bev * (1.0 - smoothstep(size * 0.08, size * 0.5, fw));",
   "}",
+  "vec2 surfaceTileAt(vec2 uv, vec2 footprint, float basin) {",
+  "  if (basin <= 0.0) return tileAt(uv, 20.0, footprint);",
+  "  if (basin >= 1.0) return tileAt(uv, 10.0, footprint);",
+  "  return mix(tileAt(uv, 20.0, footprint), tileAt(uv, 10.0, footprint), basin);",
+  "}",
+  "vec2 surfaceTileTilt(vec2 uv, float fw, float basin) {",
+  "  if (basin <= 0.0) return tileTilt(uv, 20.0, fw);",
+  "  if (basin >= 1.0) return tileTilt(uv, 10.0, fw);",
+  "  return mix(tileTilt(uv, 20.0, fw), tileTilt(uv, 10.0, fw), basin);",
+  "}",
 
   // Physically based tile shading: GGX sun specular, Fresnel, diffuse from the baked multi-bounce probes.
   // glO = weight of the traced mirror reflection to add on top (0 when cheap: then it is approximated).
@@ -728,14 +773,13 @@ String[] POOL_MAIN = {
   "  map(p);",
   "  float wdH = gWD;",
   "  float pal = palOf(gS[4]);",
-  "  bool vS = vaultS(gS[4]);",
-  "  vec2 lpS = p.xy - (floor(p.xy / CS) + 0.5) * CS;",
-  "  bool oxS = gN[3] > 0.5 || gN[5] > 0.5;",
-  "  bool oyS = gN[1] > 0.5 || gN[7] > 0.5;",
-  "  float bxS = abs(VR - length(vec2(lpS.y, max(p.z - VZ, 0.0))));",
-  "  float byS = abs(VR - length(vec2(lpS.x, max(p.z - VZ, 0.0))));",
-  "  bool alongY = !oxS || (oyS && byS < bxS);",
-  "  float fw = t * pixAng / max(abs(dot(n, rd)), 0.12);",            // the footprint stretches at grazing angles: no moire
+  "  float fw = t * pixAng / max(abs(dot(n, rd)), 0.12);",            // isotropic estimate (tilt fades)
+  "  vec3 dp0 = rd - n * dot(rd, n);",
+  "  float lp0 = length(dp0);",
+  "  gDp = lp0 > 1e-4 ? dp0 / lp0 : normalize(cross(n, abs(n.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));",
+  "  gDq = cross(n, gDp);",
+  "  gNr = max(dot(n, rd) * dot(n, rd), 0.0025);",
+  "  gFt = t * pixAng;",
   "  vec3 E = irradiance(p + n * 4.0, n);",
   "  vec3 V = -rd;",
   "  float sv = sunLight(p, n, cheap);",
@@ -749,7 +793,7 @@ String[] POOL_MAIN = {
   "  float gloss;",
   "  vec3 nP = n;",
   "  bool under = p.z < WATER - 1.0;",
-  "  bool basin = p.z < -3.0;",
+  "  float basin = 1.0 - smoothstep(-18.0, -2.0, p.z);",
   "  float ao = cheap ? 1.0 : calcAO(p, n);",
   "  if (mat > 2.5) {",
   "    alb = vec3(0.88, 0.88, 0.87) * (0.97 + 0.04 * vnoise(p.xy * 0.04 + p.z * 0.03));",
@@ -757,8 +801,8 @@ String[] POOL_MAIN = {
   "    gloss = 0.2;",
   "  } else {",
   "    bool floorS = n.z > 0.6;",
-  "    float size = pal < 0.5 ? (floorS ? 20.0 : 15.0) : (pal < 1.5 ? 10.0 : (pal < 2.5 ? 15.0 : (floorS ? 40.0 : 30.0)));",
-  "    if (basin) size = pal > 2.5 ? 15.0 : 7.5;",
+  // One world-space lattice across cells and curved surfaces. Palette and normal thresholds
+  // must not change tile size or switch to a different local UV chart mid-surface.
   "    vec2 g;",
   "    vec2 uv;",
   "    vec3 tu;",
@@ -766,37 +810,37 @@ String[] POOL_MAIN = {
   "    float wDom = 1.0;",
   "    if (mat > 1.5 && abs(n.z) < 0.6) {",
   "      vec2 q = p.xy - (floor(p.xy / CS) + 0.5) * CS;",
-  "      uv = vec2(atan(q.y, q.x) * length(q), p.z);",
+  "      float radius = isFeat(gN[4], 2.0) ? STC : COLR;",
+  "      float wrap = floor(6.2831853 * radius / 20.0 + 0.5) * 20.0;",
+  "      uv = vec2(atan(q.y, q.x) * (wrap / 6.2831853), p.z);", // an integer number of tiles closes the cylinder without a seam
   "      tu = normalize(vec3(-q.y, q.x, 0.0));",
   "      tv = vec3(0.0, 0.0, 1.0);",
-  "      g = tileAt(uv, size, fw);",
-  "    } else if (vS && !floorS && p.z > 2.0) {",
-  "      vec2 lp = p.xy - (floor(p.xy / CS) + 0.5) * CS;",
-  "      float vx = alongY ? lp.x : lp.y;",
-  "      uv = vec2(alongY ? p.y : p.x, p.z <= VZ ? p.z : VZ + VR * atan(p.z - VZ, abs(vx)));",
-  "      tu = alongY ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);",
-  "      tv = normalize(cross(n, tu));",
-  "      g = tileAt(uv, size, fw);",
+  "      g = surfaceTileAt(uv, vec2(footOf(tu), footOf(tv)), basin);",
   "    } else {",
-  "      vec3 w = pow(abs(n), vec3(8.0));",
+  "      vec3 w = pow(abs(n), vec3(4.0));",
   "      w /= w.x + w.y + w.z;",
-  "      g = tileAt(p.yz, size, fw) * w.x + tileAt(p.xz, size, fw) * w.y + tileAt(p.xy, size, fw) * w.z;",
+  "      vec3 X = vec3(1.0, 0.0, 0.0);",
+  "      vec3 Y = vec3(0.0, 1.0, 0.0);",
+  "      vec3 Z = vec3(0.0, 0.0, 1.0);",
+  "      g = vec2(0.0);",
+  "      if (w.x > 0.001) g += surfaceTileAt(p.yz, vec2(footOf(Y), footOf(Z)), basin) * w.x;",
+  "      if (w.y > 0.001) g += surfaceTileAt(p.xz, vec2(footOf(X), footOf(Z)), basin) * w.y;",
+  "      if (w.z > 0.001) g += surfaceTileAt(p.xy, vec2(footOf(X), footOf(Y)), basin) * w.z;",
   "      if (w.z >= w.x && w.z >= w.y) { uv = p.xy; tu = vec3(1.0, 0.0, 0.0); tv = vec3(0.0, 1.0, 0.0); wDom = w.z; }",
   "      else if (w.x >= w.y) { uv = p.yz; tu = vec3(0.0, 1.0, 0.0); tv = vec3(0.0, 0.0, 1.0); wDom = w.x; }",
   "      else { uv = p.xz; tu = vec3(1.0, 0.0, 0.0); tv = vec3(0.0, 0.0, 1.0); wDom = w.y; }",
   "      wDom = smoothstep(0.55, 0.9, wDom);",
   "    }",
-  "    vec2 tl = cheap ? vec2(0.0) : tileTilt(uv, size, fw) * wDom;",
+  "    vec2 tl = cheap ? vec2(0.0) : surfaceTileTilt(uv, fw, basin) * wDom;",
   "    nP = normalize(n + tu * tl.x + tv * tl.y);",
   "    vec3 tileC = vec3(0.93, 0.935, 0.93);",
   "    vec3 groutC = vec3(0.60, 0.62, 0.62);",
   "    if (pal > 0.5 && pal < 1.5) tileC = vec3(0.90, 0.93, 0.95);",
   "    if (pal > 1.5 && pal < 2.5 && !floorS && p.z > 68.0 && p.z < 112.0) tileC = vec3(0.22, 0.60, 0.66);",
   "    if (pal > 2.5) groutC = vec3(0.78, 0.79, 0.79);",
-  "    if (basin) {",
-  "      tileC = (pal > 1.5 && pal < 2.5) ? vec3(0.36, 0.72, 0.77) : vec3(0.60, 0.81, 0.93);",
-  "      groutC = tileC * 0.72;",
-  "    }",
+  "    vec3 basinC = (pal > 1.5 && pal < 2.5) ? vec3(0.36, 0.72, 0.77) : vec3(0.60, 0.81, 0.93);",
+  "    tileC = mix(tileC, basinC, basin);",
+  "    groutC = mix(groutC, basinC * 0.72, basin);",
   "    tileC *= 0.97 + 0.06 * g.y;",
   "    alb = mix(tileC, groutC, g.x);",
   "    alb *= mix(vec3(0.84, 0.84, 0.80), vec3(1.0), mix(1.0, ao, 0.6 + 0.4 * g.x));",   // grime settles where light can't reach
@@ -822,7 +866,7 @@ String[] POOL_MAIN = {
   "  col += SUNC * (spec * sv * gloss);",
   // traced mirror for floors (the reflections you notice) and strong grazing glints; elsewhere the room's
   // baked light stands in for what the glaze reflects
-  "  if (!cheap && (n.z > 0.5 || refl > 0.3)) glO = refl * mix(0.55, 1.0, ao);",
+  "  if (!cheap && n.z > 0.5) glO = refl * mix(0.55, 1.0, ao);",
   "  else col += E * (refl * 0.9);",
   "  nO = nP;",
   "  if (under) {",                                               // refracted sun and sky caustics, focused by the simulated surface
@@ -837,104 +881,146 @@ String[] POOL_MAIN = {
   // ---- sun shafts in the air (only where the sky is visible through an opening)
   "float shafts(vec3 ro, vec3 rd, float tEnd) {",
   "  float L = min(tEnd, 3200.0);",
-  "  float jit = hash2(gl_FragCoord.xy + fract(time * 7.0) * 61.0);",
+  "  float jit = hash2(gl_FragCoord.xy - renderOrigin + fract(time * 7.0) * 61.0);",
   "  float acc = 0.0;",
-  "  for (int s = zeroI; s < 8; s++) {",
-  "    vec3 q = ro + rd * ((float(s) + jit) / 8.0 * L);",
+  "  for (int s = zeroI; s < 5; s++) {",
+  "    vec3 q = ro + rd * ((float(s) + jit) / 5.0 * L);",
   "    if (q.z < WATER) continue;",
   "    if (q.z > hOf(styleAt(floor(q.xy / CS)))) continue;",
   "    acc += sunGate(q);",
   "  }",
-  "  return acc / 8.0 * L;",
+  "  return acc / 5.0 * L;",
   "}",
 
-  // One march and one shadeSurf call site for every ray (GLSL inlines each call, and the scene is big):
-  // a small queue of rays — the camera ray, then the mirror reflection of glazed tiles, or the reflection
-  // and refraction of the water surface. kind: 0 camera, 1 secondary above water, 2 refracted (under water).
-  // Output: the camera sensor's response, 1 - exp(-light * exposure), exactly like the Backrooms' world shader,
-  // so the engine's metering, auto exposure, lens, tape and codec treat it the same way.
+};
+
+// ---- PASS 2 (full resolution): the camera rays, fully shaded. What glazed floors, chrome and the water show by
+//      reflection / refraction comes from pass 1 (POOL_SEC_MAIN) at half resolution, blended in per surface type.
+//      Output: the camera sensor's response, 1 - exp(-light * exposure), exactly like the Backrooms' world shader,
+//      so the engine's metering, auto exposure, lens, tape and codec treat it the same way.
+String[] POOL_MAIN = {
+  // pass 1's result around this pixel, only from samples of the same kind of surface (0.25 mirror, 0.75 water)
+  "vec3 secSample(float type, vec3 fallback) {",
+  "  vec2 tc = (gl_FragCoord.xy - renderOrigin) * (secSize / bufSize) - 0.5;",
+  "  vec2 i0 = floor(tc);",
+  "  vec2 f = tc - i0;",
+  "  vec3 s = vec3(0.0);",
+  "  float w = 0.0;",
+  "  for (int j = zeroI; j < 2; j++) {",
+  "    for (int i = zeroI; i < 2; i++) {",
+  "      vec4 v = poolDataFetch(secTex, (secOrigin + clamp(i0 + vec2(float(i), float(j)), vec2(0.0), secSize - 1.0) + 0.5) / secCapacity);",
+  "      float ww = (i == 1 ? f.x : 1.0 - f.x) * (j == 1 ? f.y : 1.0 - f.y) * (abs(v.a - type) < 0.2 ? 1.0 : 0.0) + 1e-6;",
+  "      s += -2.0 * log(max(vec3(1.0) - v.rgb, vec3(0.002))) * ww;",
+  "      w += ww;",
+  "    }",
+  "  }",
+  "  return w > 0.01 ? s / w : fallback;",
+  "}",
   "void main() {",
   "  vec2 uv = vUV * 2.0 - 1.0;",
   "  vec3 rd = normalize(camF + camR * (uv.x * tanHalf.x) - camU * (uv.y * tanHalf.y));",
-  "  vec3 hazeC = hazeCol;",                     // the humid air, lit like the room around you (from the bake, on the CPU)
-  "  vec3 jo[3];",
-  "  vec3 jd[3];",
-  "  vec3 jw[3];",
-  "  float jt[3];",
-  "  float jk[3];",
-  "  jo[0] = camPos; jd[0] = rd; jw[0] = vec3(1.0); jt[0] = 12000.0; jk[0] = 0.0;",
-  "  jo[1] = camPos; jd[1] = rd; jw[1] = vec3(0.0); jt[1] = 0.0; jk[1] = 1.0;",
-  "  jo[2] = camPos; jd[2] = rd; jw[2] = vec3(0.0); jt[2] = 0.0; jk[2] = 1.0;",
-  "  int nj = 1;",
-  "  float tCam = 0.0;",
-  "  vec3 col = vec3(0.0);",
-  "  for (int k = zeroI; k < 3; k++) {",
-  "    if (k >= nj) break;",
-  "    vec3 ro = jo[k];",
-  "    vec3 dir = jd[k];",
-  "    vec3 w = jw[k];",
-  "    float kind = jk[k];",
-  "    float tw = (kind < 1.5 && dir.z < -0.0001) ? (WATER - ro.z) / dir.z : 1000000.0;",
-  "    if (tw < 0.0) tw = 1000000.0;",
-  "    float mat;",
-  "    int steps = kind < 0.5 ? 220 : (kind < 1.5 ? 64 : 56);",
-  "    float t = march(ro, dir, min(tw, jt[k]), steps, mat);",
-  "    if (k == 0) tCam = t;",
-  "    float tTot = k == 0 ? t : tCam + t;",
-  "    vec3 c = hazeC;",
-  "    if (mat > 8.5) c = SKYC;",
-  "    else if (mat > 0.0) {",
-  "      vec3 p = ro + dir * t;",
-  "      vec3 n;",
-  "      float gl;",
-  "      c = shadeSurf(p, dir, mat, tTot, kind > 0.5, n, gl);",
-  "      if (gl > 0.05 && nj < 3) {",                       // a traced mirror, only where the Fresnel makes it visible
-  "        vec3 rr = reflect(dir, n);",
-  "        if (rr.z * n.z < -0.2) rr = reflect(dir, vec3(0.0, 0.0, sign(n.z)));",
-  "        jo[nj] = p + n * 1.0; jd[nj] = rr; jw[nj] = w * gl; jt[nj] = 2200.0; jk[nj] = 1.0;",
-  "        nj++;",
-  "      }",
-  "    } else if (mat < -1.5 && tw < 100000.0) {",       // the water surface: queue reflection and refraction
-  "      vec3 p = ro + dir * tw;",
-  "      vec3 wn = waterN(p.xy, tTot);",
-  "      float fres = 0.02 + 0.98 * pow(clamp(1.0 - dot(wn, -dir), 0.0, 1.0), 5.0);",
-  "      vec3 H = normalize(sunDir - dir);",
-  "      col += w * SUNC * (sunGate(p) * pow(max(dot(wn, H), 0.0), 1400.0) * 9.0);",
-  "      if (nj < 3) {",
-  "        vec3 rr = reflect(dir, wn);",
-  "        rr.z = max(rr.z, 0.02);",
-  "        jo[nj] = p + vec3(0.0, 0.0, 0.5); jd[nj] = normalize(rr); jw[nj] = w * fres; jt[nj] = 5000.0; jk[nj] = 1.0;",
-  "        nj++;",
-  "      }",
-  "      if (nj < 3) {",
-  "        jo[nj] = p - vec3(0.0, 0.0, 0.5); jd[nj] = refract(dir, wn, 0.7519); jw[nj] = w * (1.0 - fres); jt[nj] = 1600.0; jk[nj] = 2.0;",
-  "        nj++;",
-  "      }",
-  "      continue;",
-  "    }",
-  "    if (kind > 1.5) {",                                // under water: absorption and in-scattering along the path
-  "      vec3 trans = exp(-SIGMA * t);",
-  "      c = c * trans + WATERC * irradiance(ro + vec3(0.0, 0.0, 20.0), vec3(0.0, 0.0, 1.0)) * 0.35 * (1.0 - trans);",
-  "    }",
-  "    col += w * c;",
+  "  vec3 hazeC = -log(max(vec3(1.0) - poolDataFetch(hazeTex, vec2(0.5)).rgb, vec3(0.002)));",
+  "  float tw = rd.z < -0.0001 ? (WATER - camPos.z) / rd.z : 1000000.0;",
+  "  float mat;",
+  "  float t = march(camPos, rd, min(tw, 12000.0), 220, mat);",
+  "  vec3 col = hazeC;",
+  "  if (mat > 8.5) col = SKYC;",
+  "  else if (mat > 0.0) {",
+  "    vec3 p = camPos + rd * t;",
+  "    vec3 n;",
+  "    float gl;",
+  "    col = shadeSurf(p, rd, mat, t, false, n, gl);",
+  "    if (gl > 0.0) col += secSample(0.25, hazeC) * gl;",          // the mirror image in the glaze
+  "  } else if (mat < -1.5 && tw < 100000.0) {",                   // the water: glint here, the rest from pass 1
+  "    vec3 p = camPos + rd * tw;",
+  "    vec3 wn = waterN(p.xy, tw);",
+  "    vec3 H = normalize(sunDir - rd);",
+  "    col = SUNC * (sunGate(p) * pow(max(dot(wn, H), 0.0), 1400.0) * 9.0) + secSample(0.75, WATERC * hazeC * 1.4);",
+  "    t = tw;",
   "  }",
-  "  col += SUNC * (shafts(camPos, rd, tCam) * 0.000014 * (0.5 + 1.2 * pow(max(dot(rd, sunDir), 0.0), 4.0)));",
-  "  col = mix(col, hazeC, 1.0 - exp(-tCam / 9000.0));",
+  "  col += SUNC * (shafts(camPos, rd, t) * 0.000014 * (0.5 + 1.2 * pow(max(dot(rd, sunDir), 0.0), 4.0)));",
+  "  col = mix(col, hazeC, 1.0 - exp(-t / 9000.0));",
   "  if (!(col.r == col.r) || !(col.g == col.g) || !(col.b == col.b)) col = hazeC;",   // never let a NaN reach the bloom
   "  col = 1.0 - exp(-max(col, 0.0) * exposure * 1.6);",
   "  gl_FragColor = vec4(pow(col, vec3(1.0 / 2.2)), 1.0);",
   "}"
 };
-String[] POOL_FRAG = poolJoin(POOL_COMMON, POOL_MAIN);
+String[] POOL_FRAG = poolJoin(poolJoin(POOL_COMMON, POOL_FUNCS), POOL_MAIN);
+
+// ---- PASS 1 (half resolution): the secondary rays. For a glazed floor or chrome: the unweighted mirror image
+//      (pass 2 applies its own detailed Fresnel and gloss). For the water: the whole surface — reflection times
+//      Fresnel plus the refracted, absorbed pool below. Stored as 1 - exp(-L/2); alpha = which kind of surface.
+//      One march / shadeSurf call site for the secondary rays (a 2-step loop), as everywhere in these shaders.
+String[] POOL_SEC_MAIN = {
+  "void main() {",
+  "  vec2 uv = vUV * 2.0 - 1.0;",
+  "  vec3 rd = normalize(camF + camR * (uv.x * tanHalf.x) - camU * (uv.y * tanHalf.y));",
+  "  vec3 hazeC = -log(max(vec3(1.0) - poolDataFetch(hazeTex, vec2(0.5)).rgb, vec3(0.002)));",
+  "  float tw = rd.z < -0.0001 ? (WATER - camPos.z) / rd.z : 1000000.0;",
+  "  float mat;",
+  "  float t0 = march(camPos, rd, min(tw, 12000.0), 220, mat);",
+  "  float type = 0.0;",
+  "  vec3 oA = camPos; vec3 dA = rd; vec3 wA = vec3(0.0); float tmA = 0.0;",
+  "  vec3 oB = camPos; vec3 dB = rd; vec3 wB = vec3(0.0); float tmB = 0.0;",
+  "  float tBase = t0;",
+  "  if (mat > 0.0 && mat < 8.5) {",
+  "    vec3 p = camPos + rd * t0;",
+  "    vec3 n = calcNormal(p);",
+  "    if (n.z > 0.5 || mat > 3.5) {",
+  "      vec3 rr = reflect(rd, n);",
+  "      if (rr.z * n.z < -0.2) rr = reflect(rd, vec3(0.0, 0.0, sign(n.z)));",
+  "      oA = p + n * 1.0; dA = rr; wA = vec3(1.0); tmA = 2200.0; type = 0.25;",
+  "    }",
+  "  } else if (mat < -1.5 && tw < 100000.0) {",
+  "    vec3 p = camPos + rd * tw;",
+  "    vec3 wn = waterN(p.xy, tw);",
+  "    float fres = 0.02 + 0.98 * pow(clamp(1.0 - dot(wn, -rd), 0.0, 1.0), 5.0);",
+  "    vec3 rr = reflect(rd, wn);",
+  "    rr.z = max(rr.z, 0.02);",
+  "    oA = p + vec3(0.0, 0.0, 0.5); dA = normalize(rr); wA = vec3(fres); tmA = 5000.0;",
+  "    oB = p - vec3(0.0, 0.0, 0.5); dB = refract(rd, wn, 0.7519); wB = vec3(1.0 - fres); tmB = 1600.0;",
+  "    type = 0.75;",
+  "    tBase = tw;",
+  "  }",
+  "  vec3 col = vec3(0.0);",
+  "  for (int k = zeroI; k < 2; k++) {",
+  "    if (type < 0.1 || (k == 1 && type < 0.5)) break;",
+  "    bool under = k == 1;",
+  "    vec3 o = under ? oB : oA;",
+  "    vec3 d = under ? dB : dA;",
+  "    float twk = (!under && d.z < -0.0001) ? (WATER - o.z) / d.z : 1000000.0;",
+  "    if (twk < 0.0) twk = 1000000.0;",
+  "    float m2;",
+  "    float t2 = march(o, d, min(twk, under ? tmB : tmA), under ? 48 : 64, m2);",
+  "    vec3 c = hazeC;",
+  "    if (m2 > 8.5) c = SKYC;",
+  "    else if (m2 > 0.0) { vec3 nn; float gg; c = shadeSurf(o + d * t2, d, m2, tBase + t2, true, nn, gg); }",
+  "    else if (m2 < -1.5 && twk < 100000.0) c = WATERC * hazeC * 2.2;",   // a reflection that lands on water
+  "    if (under) {",                                           // absorption and in-scattering along the path
+  "      vec3 trans = exp(-SIGMA * t2);",
+  "      c = c * trans + WATERC * irradiance(o + vec3(0.0, 0.0, 20.0), vec3(0.0, 0.0, 1.0)) * 0.35 * (1.0 - trans);",
+  "    }",
+  "    col += (under ? wB : wA) * c;",
+  "  }",
+  "  if (!(col.r == col.r) || !(col.g == col.g) || !(col.b == col.b)) col = vec3(0.0);",
+  "  gl_FragColor = vec4(1.0 - exp(-max(col, 0.0) * 0.5), type);",
+  "}"
+};
+String[] POOL_SEC = poolJoin(poolJoin(POOL_COMMON, POOL_FUNCS), POOL_SEC_MAIN);
 
 // ---- the light bake: every texel is one face of one probe. It traces cosine-distributed rays into the level,
 //      lights what they hit with the sun through the skylights plus the previous pass's probes (so every pass adds
 //      one more bounce), and blends the result in. White glazed tiles reflect ~86%: the light goes everywhere.
 String[] POOL_BAKE_MAIN = {
+  "uniform float bakeSlice;",
+  "uniform float bakeSlices;",
   "uniform float blendK;",
   "uniform float frameSeed;",
   "void main() {",
   "  vec2 px = floor(gl_FragCoord.xy);",
+  "  if (mod(px.y, bakeSlices) != bakeSlice) {",
+  "    gl_FragColor = poolDataFetch(probes, (px + 0.5) / probeTex); return;",
+  "  }",
   "  float ci = floor(px.x / 6.0);",
   "  float face = px.x - ci * 6.0;",
   "  float cj = floor(px.y / 3.0);",
@@ -973,38 +1059,43 @@ String[] POOL_BAKE_MAIN = {
 };
 String[] POOL_BAKE = poolJoin(POOL_COMMON, POOL_BAKE_MAIN);
 
+String[] POOL_HAZE = poolJoin(POOL_COMMON, new String[]{
+  "uniform float hazeBlend;",
+  "void main() {",
+  "  vec2 c = floor(camPos.xy / CS); vec3 light = vec3(0.0);",
+  "  if (codeAt(c) > 0.5) {",
+  "    float floorZ = fH(elevAt(c), vec2(0.0));",
+  "    float k = clamp(floor((camPos.z-floorZ-35.0)/max((hOf(styleAt(c))-floorZ-70.0)*0.5,1.0)+0.5),0.0,2.0);",
+  "    for (int face = 0; face < 6; face++) light += probeFetch(c,k,float(face)) / 6.0;",
+  "  }",
+  "  vec3 previous = -2.0 * log(max(vec3(1.0)-poolDataFetch(hazeTex,vec2(0.5)).rgb,vec3(0.002)));",
+  "  gl_FragColor = vec4(1.0-exp(-mix(previous,light,hazeBlend)*0.5),1.0);",
+  "}"
+});
+
 // ---- the water: a damped wave equation on a height field covering the level (16-bit height and previous
 //      height packed in RGBA8). Walls and the pool edges reflect the waves; impulses come from you and from drips.
-String[] POOL_SIM = {
+String[] POOL_SIM = poolJoin(POOL_DATA_SAMPLING, new String[]{
   "#define PROCESSING_TEXTURE_SHADER",
   "#ifdef GL_ES",
   "precision highp float;",
   "#endif",
   "uniform sampler2D texture;",
   "uniform sampler2D state;",
-  "uniform vec4 mapData[" + POOL_VEC4 + "];",
+  "uniform sampler2D mapTex;",
   "uniform float gridSize;",
   "uniform float simN;",
   "uniform float simScale;",
   "uniform vec4 imp[6];",
+  "uniform vec4 flow;",
   "uniform float c2;",
   "uniform float damp;",
   "varying vec2 vUV;",
   "const float CS = " + CELL + ";",
-  "float unpack(vec4 v4, float idx) {",
-  "  float fi = floor(idx * 0.25 + 0.01);",
-  "  float sub = idx - fi * 4.0;",
-  "  float r = fi - floor(fi * 0.25 + 0.01) * 4.0;",
-  "  float v = r < 0.5 ? v4.x : (r < 1.5 ? v4.y : (r < 2.5 ? v4.z : v4.w));",
-  "  float base = sub < 0.5 ? 1.0 : (sub < 1.5 ? 17.0 : (sub < 2.5 ? 289.0 : 4913.0));",
-  "  float hi = floor((v + 0.5) / base);",
-  "  return hi - 17.0 * floor((hi + 0.5) / 17.0);",
-  "}",
   "bool wetT(vec2 t) {",
   "  vec2 c = floor((t + 0.5) / simScale / CS);",
   "  if (c.x < 0.0 || c.y < 0.0 || c.x >= gridSize || c.y >= gridSize) return false;",
-  "  float idx = c.y * gridSize + c.x;",
-  "  float code = unpack(mapData[int(floor(idx * 0.0625 + 0.001))], idx);",
+  "  float code = floor(poolDataFetch(mapTex, (c + 0.5) / gridSize).r * 255.0 + 0.5);",
   "  return code > 0.5 && mod(code - 1.0, 3.0) > 0.5;",
   "}",
   "vec2 dec(vec4 v) { vec4 b = floor(v * 255.0 + 0.5); return (vec2(b.r * 256.0 + b.g, b.b * 256.0 + b.a) / 65535.0 - 0.5) * 8.0; }",
@@ -1017,12 +1108,12 @@ String[] POOL_SIM = {
   "void main() {",
   "  vec2 t = floor(gl_FragCoord.xy);",
   "  if (!wetT(t)) { gl_FragColor = enc(vec2(0.0)); return; }",
-  "  vec2 s = dec(texture2D(state, (t + 0.5) / simN, -16.0));",
+  "  vec2 s = dec(poolDataFetch(state, (t + 0.5) / simN));",
   "  float h = s.x;",
   "  float sum = 0.0;",
   "  for (int k = 0; k < 4; k++) {",
   "    vec2 o = k == 0 ? vec2(1.0, 0.0) : (k == 1 ? vec2(-1.0, 0.0) : (k == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0)));",
-  "    sum += wetT(t + o) ? dec(texture2D(state, (t + o + 0.5) / simN, -16.0)).x : h;",
+  "    sum += wetT(t + o) ? dec(poolDataFetch(state, (t + o + 0.5) / simN)).x : h;",
   "  }",
   "  float hn = (2.0 * h - s.y + c2 * (sum - 4.0 * h)) * damp;",
   "  vec2 w = (t + 0.5) / simScale;",
@@ -1032,9 +1123,12 @@ String[] POOL_SIM = {
   "    vec2 dv = w - m.xy;",
   "    hn += m.w * exp(-dot(dv, dv) / (m.z * m.z));",
   "  }",
+  "  if (flow.z > 0.0) {",
+  "    vec2 dv = w - flow.xy; hn += flow.w * exp(-dot(dv, dv) / (flow.z * flow.z));",
+  "  }",
   "  gl_FragColor = enc(vec2(hn, h));",
   "}"
-};
+});
 
 String[] poolJoin(String[] a, String[] b) {
   String[] r = new String[a.length + b.length];
@@ -1052,11 +1146,13 @@ String[] POOL_BRIGHT = {
   "uniform sampler2D texture;",
   "uniform vec2 px;",
   "uniform float thresh;",
+  "uniform vec2 brightMin, brightMax;",
   "varying vec4 vertTexCoord;",
+  "vec3 brightAt(vec2 uv) { return texture2D(texture, clamp(uv, brightMin, brightMax)).rgb; }",
   "void main() {",
   "  vec2 uv = vertTexCoord.st;",
-  "  vec3 c = texture2D(texture, uv + px * vec2(-1.0, -1.0)).rgb + texture2D(texture, uv + px * vec2(1.0, -1.0)).rgb",
-  "         + texture2D(texture, uv + px * vec2(-1.0, 1.0)).rgb + texture2D(texture, uv + px * vec2(1.0, 1.0)).rgb;",
+  "  vec3 c = brightAt(uv + px * vec2(-1.0, -1.0)) + brightAt(uv + px * vec2(1.0, -1.0))",
+  "         + brightAt(uv + px * vec2(-1.0, 1.0)) + brightAt(uv + px * vec2(1.0, 1.0));",
   "  c *= 0.25;",
   "  float l = max(c.r, max(c.g, c.b));",
   "  gl_FragColor = vec4(c * smoothstep(thresh, 1.0, l), 1.0);",
@@ -1070,12 +1166,14 @@ String[] POOL_BLUR = {
   "#define PROCESSING_TEXTURE_SHADER",
   "uniform sampler2D texture;",
   "uniform vec2 dir;",
+  "uniform vec2 blurMin, blurMax;",
   "varying vec4 vertTexCoord;",
+  "vec3 blurAt(vec2 uv) { return texture2D(texture, clamp(uv, blurMin, blurMax)).rgb; }",
   "void main() {",
   "  vec2 uv = vertTexCoord.st;",
-  "  vec3 c = texture2D(texture, uv).rgb * 0.227027;",
-  "  c += (texture2D(texture, uv + dir * 1.384615).rgb + texture2D(texture, uv - dir * 1.384615).rgb) * 0.316216;",
-  "  c += (texture2D(texture, uv + dir * 3.230769).rgb + texture2D(texture, uv - dir * 3.230769).rgb) * 0.070270;",
+  "  vec3 c = blurAt(uv) * 0.227027;",
+  "  c += (blurAt(uv + dir * 1.384615) + blurAt(uv - dir * 1.384615)) * 0.316216;",
+  "  c += (blurAt(uv + dir * 3.230769) + blurAt(uv - dir * 3.230769)) * 0.070270;",
   "  gl_FragColor = vec4(c, 1.0);",
   "}"
 };
@@ -1086,6 +1184,8 @@ void initPools() {
   poolBlur = new PShader(this, POST_VERT, POOL_BLUR);
   poolBakeSh = new PShader(this, POOL_VERT, POOL_BAKE);
   poolSimSh = new PShader(this, POOL_VERT, POOL_SIM);
+  poolSecSh = new PShader(this, POOL_VERT, POOL_SEC);
+  poolHazeSh = new PShader(this, POOL_VERT, POOL_HAZE);
   poolDummy = createImage(4, 4, RGB);
   poolDummy.loadPixels();
   java.util.Arrays.fill(poolDummy.pixels, color(255));
@@ -1100,7 +1200,12 @@ PGraphics poolDataBuffer(int w, int h) {       // exact data texture: no multisa
 
 // draw one full-screen pass of a data shader into dst (writes every texel, blending off)
 void poolDataPass(PGraphics dst, PShader sh) {
+  poolDataPassRegion(dst, sh, dst.width, dst.height);
+}
+
+void poolDataPassRegion(PGraphics dst, PShader sh, int w, int h) {
   dst.beginDraw();
+  prepareLightingData(dst, poolMapTex);
   dst.blendMode(REPLACE);
   dst.textureMode(NORMAL);
   dst.shader(sh);
@@ -1108,20 +1213,17 @@ void poolDataPass(PGraphics dst, PShader sh) {
   dst.beginShape(QUADS);
   dst.texture(poolDummy);
   dst.vertex(0, 0, 0, 0);
-  dst.vertex(dst.width, 0, 1, 0);
-  dst.vertex(dst.width, dst.height, 1, 1);
-  dst.vertex(0, dst.height, 0, 1);
+  dst.vertex(w, 0, 1, 0);
+  dst.vertex(w, h, 1, 1);
+  dst.vertex(0, h, 0, 1);
   dst.endShape();
   dst.resetShader();
   dst.endDraw();
 }
 
-// the level's data and lighting uniforms shared by the renderer and the bake
+// The level's data textures and lighting uniforms shared by the renderer and the bake.
 void poolSetScene(PShader sh, float t) {
-  sh.set("mapData", poolMapU, 4);
-  sh.set("lightData", poolLightU, 4);
-  sh.set("styleData", poolStyleU, 4);
-  sh.set("elevData", poolElevU, 4);
+  sh.set("mapTex", poolMapTex);
   sh.set("gridSize", (float) POOL_GRID);
   sh.set("time", t);
   sh.set("sunDir", POOL_SUN.x, POOL_SUN.y, POOL_SUN.z);
@@ -1129,6 +1231,7 @@ void poolSetScene(PShader sh, float t) {
   sh.set("probeTex", (float) poolProbeA.width, (float) poolProbeA.height);
   sh.set("probes", poolProbeA);
   sh.set("waterSim", poolSimA);
+  if (poolHazeA != null) sh.set("hazeTex", poolHazeA);
   sh.set("simN", (float) POOL_SIM_N);
   sh.set("simScale", POOL_SIM_N / (POOL_GRID * CELL));
 }
@@ -1156,15 +1259,22 @@ void poolResetLighting() {
   // to the next; with mipmapped sampling the GPU then reads a level that was never generated, which drew
   // dotted lines on the walls and ceilings at every probe cell boundary.
   for (PGraphics g : new PGraphics[]{poolProbeA, poolProbeB, poolSimA, poolSimB})
-    ((processing.opengl.PGraphicsOpenGL) g).getTexture().usingMipmaps(false, 2);   // 2 = Texture.POINT (not public)
-  poolBakePasses = 0;
+    prepareLightingData(g, g); // exact texels, including anisotropy off
+  poolBakePasses = poolBakeSlice = 0;
+  poolProbePix = null;
   poolImpN = 0;
+  poolFlow[2] = 0;
+  poolSimAccumulator = 0;
+  poolDripT = 0;
+  poolHazeReady = false;
 }
 
 // bounce passes: each one traces rays from every probe and adds one more bounce of light
 void poolBake(int passes) {
   for (int k = 0; k < passes; k++) {
     poolSetScene(poolBakeSh, 0);
+    poolBakeSh.set("bakeSlices", 1.0);
+    poolBakeSh.set("bakeSlice", 0.0);
     poolBakeSh.set("blendK", max(1.0 / (poolBakePasses + 1), 0.12));
     poolBakeSh.set("frameSeed", (float) (poolBakePasses % 997));
     poolDataPass(poolProbeB, poolBakeSh);
@@ -1175,11 +1285,28 @@ void poolBake(int passes) {
   }
 }
 
-// the baked light on the CPU (for the haze colour around the camera)
+// One interleaved row group per scheduled slice; untouched probes are copied exactly from the previous target.
+// Both ping-pong targets therefore always contain a complete light field.
+void poolAdvanceLighting() {
+  if (poolBakePasses >= POOL_BAKE_TOTAL) return;
+  poolSetScene(poolBakeSh, 0);
+  poolBakeSh.set("bakeSlices", (float) POOL_BAKE_SLICES);
+  poolBakeSh.set("bakeSlice", (float) poolBakeSlice);
+  poolBakeSh.set("blendK", max(1.0 / (poolBakePasses + 1), 0.12));
+  poolBakeSh.set("frameSeed", (float) (poolBakePasses % 997));
+  poolDataPass(poolProbeB, poolBakeSh);
+  PGraphics swap = poolProbeA; poolProbeA = poolProbeB; poolProbeB = swap;
+  if (++poolBakeSlice == POOL_BAKE_SLICES) { poolBakeSlice = 0; poolBakePasses++; }
+  // Haze reads probes on the GPU; gameplay never downloads a lighting atlas.
+}
+
+// Optional diagnostic readback. Gameplay computes camera haze on the GPU.
 int[] poolProbePix;
 void poolReadProbes() {
   poolProbeA.loadPixels();
-  poolProbePix = poolProbeA.pixels.clone();
+  if (poolProbePix == null || poolProbePix.length != poolProbeA.pixels.length)
+    poolProbePix = new int[poolProbeA.pixels.length];
+  System.arraycopy(poolProbeA.pixels, 0, poolProbePix, 0, poolProbePix.length);
 }
 
 // mean incoming light around (x, y, z), from the probes of that cell
@@ -1212,32 +1339,61 @@ void poolImpulse(float x, float y, float r, float amp) {
   poolImpN++;
 }
 
-// one step of the water: waves travel, reflect off the pool walls, fade; this frame's impulses are added
-void poolSimStep() {
-  for (int k = poolImpN; k < 6; k++) poolImp[k * 4 + 2] = 0;
-  poolSimSh.set("state", poolSimA);
-  poolSimSh.set("mapData", poolMapU, 4);
-  poolSimSh.set("gridSize", (float) POOL_GRID);
-  poolSimSh.set("simN", (float) POOL_SIM_N);
-  poolSimSh.set("simScale", POOL_SIM_N / (POOL_GRID * CELL));
-  poolSimSh.set("imp", poolImp, 4);
-  poolSimSh.set("c2", 0.045);
-  poolSimSh.set("damp", 0.9965);
-  poolDataPass(poolSimB, poolSimSh);
-  PGraphics s = poolSimA;
-  poolSimA = poolSimB;
-  poolSimB = s;
-  poolImpN = 0;
+// Accumulate elapsed time; event impulses survive frames with no tick and are consumed once.
+// Continuous wading is applied per tick, independent of the display refresh rate.
+void poolSimStep(float dt) {
+  poolSimAccumulator = Math.min(poolSimAccumulator + Math.max(0, dt), POOL_SIM_DT * POOL_SIM_MAX_STEPS);
+  int steps = 0;
+  while (poolSimAccumulator + 1e-9d >= POOL_SIM_DT && steps++ < POOL_SIM_MAX_STEPS) {
+    for (int k = poolImpN; k < 6; k++) poolImp[k * 4 + 2] = 0;
+    poolSimSh.set("state", poolSimA);
+    poolSimSh.set("mapTex", poolMapTex);
+    poolSimSh.set("gridSize", (float) POOL_GRID);
+    poolSimSh.set("simN", (float) POOL_SIM_N);
+    poolSimSh.set("simScale", POOL_SIM_N / (POOL_GRID * CELL));
+    poolSimSh.set("imp", poolImp, 4);
+    poolSimSh.set("flow", poolFlow[0], poolFlow[1], poolFlow[2], poolFlow[3]);
+    poolSimSh.set("c2", 0.08);
+    poolSimSh.set("damp", 0.9965);
+    poolDataPass(poolSimB, poolSimSh);
+    PGraphics swap = poolSimA; poolSimA = poolSimB; poolSimB = swap;
+    poolImpN = 0;
+    poolSimAccumulator -= POOL_SIM_DT;
+  }
 }
 
 PGraphics poolTarget(PGraphics buf, int w, int h) {
-  if (buf == null || buf.width != w || buf.height != h) buf = createGraphics(w, h, P3D);
+  if (buf == null || buf.width != w || buf.height != h) {
+    if (buf != null) buf.dispose();
+    buf = poolDataBuffer(w, h);               // full-screen shader output needs neither MSAA nor a 3D target
+  }
   return buf;
 }
 
 PGraphics poolTarget2D(PGraphics buf, int w, int h) {
-  if (buf == null || buf.width != w || buf.height != h) buf = createGraphics(w, h, P2D);
+  if (buf == null || buf.width != w || buf.height != h) {
+    if (buf != null) buf.dispose();
+    buf = poolDataBuffer(w, h);
+  }
   return buf;
+}
+
+// Release targets when leaving the level; the preview lazily recreates what it needs.
+void poolReleaseBuffers() {
+  poolFrameTimer.release();
+  poolMeterReadback.release();
+  for (PGraphics buf : new PGraphics[]{poolBuf, poolPrevBuf, poolBloomA, poolBloomB, poolBloomC,
+      poolBloomD, poolSecMain, poolSecPrev, poolProbeA, poolProbeB, poolSimA, poolSimB, poolHazeA, poolHazeB})
+    if (buf != null) buf.dispose();
+  poolBuf = poolPrevBuf = poolBloomA = poolBloomB = poolBloomC = poolBloomD = null;
+  poolSecMain = poolSecPrev = poolProbeA = poolProbeB = poolSimA = poolSimB = null;
+  poolLastScene = null;
+  poolProbePix = null;
+  poolPrevReady = false;
+  poolSimAccumulator = 0;
+  poolImpN = 0;
+  poolHazeA = poolHazeB = null;
+  poolHazeReady = false;
 }
 
 int poolRnd(int a, int b) { return min(b, (int) random(a, b + 1)); }   // inclusive
@@ -1605,21 +1761,16 @@ void poolFixCheckers() {
 }
 
 void packPools() {
-  java.util.Arrays.fill(poolMapU, 0);
-  java.util.Arrays.fill(poolLightU, 0);
-  java.util.Arrays.fill(poolStyleU, 0);
-  java.util.Arrays.fill(poolElevU, 0);
-  for (int i = 0; i < GRID; i++) for (int j = 0; j < GRID; j++) {
-    int idx = j * GRID + i;
+  if (poolMapTex == null) poolMapTex = createImage(POOL_GRID, POOL_GRID, ARGB);
+  poolMapTex.loadPixels();
+  for (int i = 0; i < POOL_GRID; i++) for (int j = 0; j < POOL_GRID; j++) {
     int code = solid[i][j] ? 0 : 1 + pBase[i][j] + 3 * pFeat[i][j];
     int lc = solid[i][j] ? 0 : 1 + round(constrain(pLight[i][j], 0, 1) * 15);
     int sc = solid[i][j] ? 0 : pStyle[i][j];
     int ec = solid[i][j] ? 0 : pElev[i][j];
-    poolMapU[idx / 4] += code * PACK[idx % 4];
-    poolLightU[idx / 4] += lc * PACK[idx % 4];
-    poolStyleU[idx / 4] += sc * PACK[idx % 4];
-    poolElevU[idx / 4] += ec * PACK[idx % 4];
+    poolMapTex.pixels[j * POOL_GRID + i] = (ec << 24) | (code << 16) | (lc << 8) | sc;
   }
+  poolMapTex.updatePixels();
 }
 
 // =====================================================================
@@ -1763,13 +1914,14 @@ void addWake(float x, float y, float amp) {
 // =====================================================================
 // START / UPDATE
 void startPools() {
+  if (poolPrevBuf != null) poolPrevBuf.dispose();
+  if (poolSecPrev != null) poolSecPrev.dispose();
+  poolPrevBuf = poolSecPrev = null;
   if (poolSh == null) initPools();
   generatePools();
   packPools();
-  if (poolSh == null) initPools();
   poolResetLighting();
-  poolBake(POOL_BAKE_START);                   // multi-bounce light for the new level (~1 s)
-  poolReadProbes();
+  poolBake(POOL_BAKE_START);                   // short bootstrap; remaining work is amortized
   poolPrevReady = false;                       // the menu preview builds a fresh map next time
 
   int[] best = null;
@@ -1794,7 +1946,10 @@ void startPools() {
   pitch = 0;
   resetCamera();                               // neutral iris/gain/shutter for the lens pass
   irisN = LENS_F_MIN;                          // start wide open: the auto exposure settles from a bright guess
-  poolHaze = poolLightProbe(player.x, player.y, EYE_H);
+  renderQuality = 1;                           // every visit starts at full resolution; the engine lowers it only if needed
+  renderCostMs = 0;
+  resolutionFrames = 0;
+  resolutionCooldown = millis() + 500;
 
   java.util.Arrays.fill(poolWakes, 0);
   energyUntil = swiftUntil = ghostUntil = fedUntil = 0;
@@ -1804,9 +1959,11 @@ void startPools() {
   crouchToggle = false;
   eyeH = EYE_H;
   poolFloorZ = poolFloorAt(player.x, player.y);
-  fov = radians(72);
+  fov = radians(50);
   roll = bobPhase = stepEnv = splashEnv = clickEnv = 0;
   lastStep = 0;
+  playerStepTravel = -1;
+  lastConcreteStep = -1;
   poolCamAmb = poolLightAt(player.x, player.y);
   poolExposure = constrain(1.0 / (0.42 + 0.62 * poolCamAmb), 0.85, 1.9);
   toastQueue.clear();
@@ -1853,24 +2010,26 @@ void updatePools(float dt) {
   eyeH = lerp(eyeH, crouching ? CROUCH_EYE : EYE_H, 1 - exp(-dt * 10));
 
   if (moving) {
+    float px0 = player.x, py0 = player.y;
     float speed = crouching ? CROUCH_SPEED : (sprinting ? SPRINT_SPEED : WALK_SPEED);
     speed *= deep ? 0.55 : (wet ? 0.8 : 1);
     float step = speed * dt / len;
     float nx = player.x + mx * step, ny = player.y + my * step;
     if (!poolBlocked(nx, player.y) && poolStepOk(player.x, player.y, nx, player.y)) player.x = nx;
     if (!poolBlocked(player.x, ny) && poolStepOk(player.x, player.y, player.x, ny)) player.y = ny;
-    bobPhase += dt * (crouching ? 6 : (sprinting ? 14 : 9)) * (deep ? 0.7 : 1);
-    int st = floor((bobPhase - HALF_PI) / PI);
-    if (st != lastStep) {
-      lastStep = st;
+    if (advancePlayerFootsteps(dist(px0, py0, player.x, player.y))) {
       if (wet) {
         splashEnv = deep ? 0.8 : 0.5;
         stepEnv = 0.1;
         addWake(player.x, player.y, deep ? 1 : 0.6);
         poolImpulse(player.x + mx / len * 30, player.y + my / len * 30, deep ? 34 : 26, deep ? 1.6 : 0.9);   // a footstep
       } else {
-        clickEnv = crouching ? 0.04 : (sprinting ? 0.22 : 0.14);
-        stepEnv = crouching ? 0.05 : 0.2;
+        if (playConcreteFootstep()) {
+          clickEnv = stepEnv = 0;
+        } else {
+          clickEnv = crouching ? 0.04 : (sprinting ? 0.22 : 0.14);
+          stepEnv = crouching ? 0.05 : 0.2;
+        }
       }
     }
   } else {
@@ -1882,7 +2041,7 @@ void updatePools(float dt) {
 
   float strafe = (kRight ? 1 : 0) - (kLeft ? 1 : 0);
   roll = lerp(roll, strafe * 0.03, 1 - exp(-dt * 7));
-  fov = lerp(fov, radians(sprinting ? 80 : 72), 1 - exp(-dt * 5));
+  fov = lerp(fov, radians(sprinting ? 60 : 50), 1 - exp(-dt * 5));
 
   float L = poolLightAt(player.x, player.y);
   poolCamAmb = lerp(poolCamAmb, L, 1 - exp(-dt * 2));
@@ -1890,9 +2049,12 @@ void updatePools(float dt) {
   updateAutoExposure(dt);                      // the engine's iris and AGC, metered from the last frame
 
   // the water: your legs push a bow wave while wading, drips fall from the skylights now and then
+  poolFlow[2] = 0;
   if (wet && moving) {
-    float sp = (sprinting ? 1.5 : (crouching ? 0.5 : 1.0)) * dt * 60;
-    poolImpulse(player.x + cos(yaw) * 40, player.y + sin(yaw) * 40, deep ? 40 : 30, (deep ? 0.10 : 0.06) * sp);
+    poolFlow[0] = player.x + cos(yaw) * 40;
+    poolFlow[1] = player.y + sin(yaw) * 40;
+    poolFlow[2] = deep ? 40 : 30;
+    poolFlow[3] = (deep ? 0.10 : 0.06) * (sprinting ? 1.5 : (crouching ? 0.5 : 1.0));
   } else if (wet && random(1) < dt * 2) {
     poolImpulse(player.x + random(-30, 30), player.y + random(-30, 30), 22, 0.12);   // standing still: small sways
   }
@@ -1912,62 +2074,108 @@ void updatePools(float dt) {
 
 // =====================================================================
 // RENDER
+PGraphics poolSecMain, poolSecPrev;            // pass 1 targets (half resolution) of the game view and the menu polaroid
+int poolDrawWidth, poolDrawHeight, poolBloomWidth, poolBloomHeight, poolBloomWideWidth, poolBloomWideHeight;
+PGraphics poolLastScene;                      // the scene frame of the previous frame (to spot reallocations)
+
+void poolCamera(PShader sh, int w, int h, PVector eye, PVector F, PVector R, PVector U, float tanY, float t, float expo, float[] wk) {
+  poolSetScene(sh, t);
+  sh.set("camPos", eye.x, eye.y, eye.z);
+  sh.set("camF", F.x, F.y, F.z);
+  sh.set("camR", R.x, R.y, R.z);
+  sh.set("camU", U.x, U.y, U.z);
+  sh.set("tanHalf", tanY * w / (float) h, tanY);
+  sh.set("exposure", expo);
+  sh.set("pixAng", 2 * tanY / h);
+  sh.set("camAmb", poolCamAmb);
+  sh.set("wakes", wk, 4);
+}
+
+void poolUpdateHaze(PVector eye) {
+  if (poolHazeA == null) {
+    poolHazeA = poolDataBuffer(1, 1); poolHazeB = poolDataBuffer(1, 1);
+    for (PGraphics target : new PGraphics[]{poolHazeA, poolHazeB}) {
+      target.beginDraw(); target.background(0); target.endDraw();
+      prepareLightingData(target, target);
+    }
+  }
+  poolSetScene(poolHazeSh, 0);
+  poolHazeSh.set("camPos", eye.x, eye.y, eye.z);
+  poolHazeSh.set("hazeBlend", poolHazeReady ? 1 - exp(-max(frameDt, 0) * 3) : 1.0);
+  poolDataPass(poolHazeB, poolHazeSh);
+  PGraphics swap = poolHazeA; poolHazeA = poolHazeB; poolHazeB = swap;
+  poolHazeReady = true;
+}
+
 void drawPoolFrame(PGraphics buf, PVector eye, PVector F, PVector R, PVector U, float tanY, float t, float expo, float[] wk) {
-  float aspect = buf.width / (float) buf.height;
-  poolSetScene(poolSh, t);
-  poolSh.set("camPos", eye.x, eye.y, eye.z);
-  poolSh.set("camF", F.x, F.y, F.z);
-  poolSh.set("camR", R.x, R.y, R.z);
-  poolSh.set("camU", U.x, U.y, U.z);
-  poolSh.set("tanHalf", tanY * aspect, tanY);
-  poolSh.set("hazeCol", poolHaze.x * 0.5, poolHaze.y * 0.5, poolHaze.z * 0.5);
-  poolSh.set("exposure", expo);
-  poolSh.set("pixAng", 2 * tanY / buf.height);
-  poolSh.set("camAmb", poolCamAmb);
-  poolSh.set("wakes", wk, 4);
-  buf.beginDraw();
-  buf.textureMode(NORMAL);
-  buf.shader(poolSh);
-  buf.noStroke();
-  buf.beginShape(QUADS);
-  buf.texture(poolDummy);
-  buf.vertex(0, 0, 0, 0);
-  buf.vertex(buf.width, 0, 1, 0);
-  buf.vertex(buf.width, buf.height, 1, 1);
-  buf.vertex(0, buf.height, 0, 1);
-  buf.endShape();
-  buf.resetShader();
-  buf.endDraw();
+  drawPoolFrameRegion(buf, buf.width, buf.height, eye, F, R, U, tanY, t, expo, wk);
+}
+
+void drawPoolFrameRegion(PGraphics buf, int w, int h, PVector eye, PVector F, PVector R, PVector U, float tanY, float t, float expo, float[] wk) {
+  poolDrawWidth = w; poolDrawHeight = h;
+  poolUpdateHaze(eye);
+  int sw = max(16, w / 2), sh = max(16, h / 2);
+  int capacityW = max(16, buf.width / 2), capacityH = max(16, buf.height / 2);
+  boolean prev = buf == poolPrevBuf;
+  PGraphics sec = prev ? poolSecPrev : poolSecMain;
+  if (sec == null || sec.width != capacityW || sec.height != capacityH) {
+    if (sec != null) sec.dispose();
+    sec = poolDataBuffer(capacityW, capacityH);
+    sec.beginDraw(); sec.background(0); sec.endDraw();
+    prepareLightingData(sec, sec);
+    if (prev) poolSecPrev = sec; else poolSecMain = sec;
+  }
+  poolCamera(poolSecSh, sw, sh, eye, F, R, U, tanY, t, expo, wk);
+  poolDataPassRegion(sec, poolSecSh, sw, sh);
+  poolCamera(poolSh, w, h, eye, F, R, U, tanY, t, expo, wk);
+  poolSh.set("secTex", sec);
+  poolSh.set("secSize", (float) sw, (float) sh);
+  poolSh.set("bufSize", (float) w, (float) h);
+  poolSh.set("renderOrigin", 0.0, (float) (buf.height - h));
+  poolSh.set("secOrigin", 0.0, (float) (sec.height - sh));
+  poolSh.set("secCapacity", (float) sec.width, (float) sec.height);
+  poolDataPassRegion(buf, poolSh, w, h);
 }
 
 void poolPass(PGraphics dst, PImage src, PShader sh) {
-  dst.beginDraw();
+  poolPassRegion(dst, src, sh, dst.width, dst.height, src.width, src.height);
+}
+
+void poolPassRegion(PGraphics dst, PImage src, PShader sh, int w, int h, int sourceW, int sourceH) {
+  if (sh == poolBright) {
+    sh.set("brightMin", 0.5 / src.width, (src.height - sourceH + 0.5) / src.height);
+    sh.set("brightMax", (sourceW - 0.5) / src.width, 1.0 - 0.5 / src.height);
+  }
+  if (sh == poolBlur) {
+    sh.set("blurMin", 0.5 / src.width, (src.height - sourceH + 0.5) / src.height);
+    sh.set("blurMax", (sourceW - 0.5) / src.width, 1.0 - 0.5 / src.height);
+  }
+  dst.beginDraw(); dst.blendMode(REPLACE); dst.imageMode(CORNER); dst.noTint();
+  ((processing.opengl.PGraphicsOpenGL) dst).getTexture(src).usingMipmaps(false, 4); // Texture.BILINEAR (private Processing constant)
   dst.shader(sh);
-  dst.image(src, 0, 0, dst.width, dst.height);
-  dst.resetShader();
-  dst.endDraw();
+  dst.image(src, 0, 0, w, h, 0, 0, sourceW, sourceH);
+  dst.resetShader(); dst.endDraw();
 }
 
 void poolBloom() {
   int w = max(16, poolBuf.width / 4), h = max(16, poolBuf.height / 4);
   int w2 = max(8, w / 4), h2 = max(8, h / 4);
-  poolBloomA = poolTarget2D(poolBloomA, w, h);
-  poolBloomB = poolTarget2D(poolBloomB, w, h);
-  poolBloomC = poolTarget2D(poolBloomC, w2, h2);
-  poolBloomD = poolTarget2D(poolBloomD, w2, h2);
-  poolBright.set("px", 1.0 / poolBuf.width, 1.0 / poolBuf.height);
-  poolBright.set("thresh", 0.78);
-  poolPass(poolBloomA, poolBuf, poolBright);
+  poolBloomWidth = max(16, poolDrawWidth / 4); poolBloomHeight = max(16, poolDrawHeight / 4);
+  poolBloomWideWidth = max(8, poolBloomWidth / 4); poolBloomWideHeight = max(8, poolBloomHeight / 4);
+  poolBloomA = poolTarget2D(poolBloomA, w, h); poolBloomB = poolTarget2D(poolBloomB, w, h);
+  poolBloomC = poolTarget2D(poolBloomC, w2, h2); poolBloomD = poolTarget2D(poolBloomD, w2, h2);
+  poolBright.set("px", 1.0 / poolBuf.width, 1.0 / poolBuf.height); poolBright.set("thresh", 0.78);
+  poolPassRegion(poolBloomA, poolBuf, poolBright, poolBloomWidth, poolBloomHeight, poolDrawWidth, poolDrawHeight);
   poolBlur.set("dir", 1.0 / w, 0.0);
-  poolPass(poolBloomB, poolBloomA, poolBlur);
+  poolPassRegion(poolBloomB, poolBloomA, poolBlur, poolBloomWidth, poolBloomHeight, poolBloomWidth, poolBloomHeight);
   poolBlur.set("dir", 0.0, 1.0 / h);
-  poolPass(poolBloomA, poolBloomB, poolBlur);
-  poolBlur.set("dir", 1.5 / w, 1.5 / h);       // downsample with a small blur
-  poolPass(poolBloomC, poolBloomA, poolBlur);
+  poolPassRegion(poolBloomA, poolBloomB, poolBlur, poolBloomWidth, poolBloomHeight, poolBloomWidth, poolBloomHeight);
+  poolBlur.set("dir", 1.5 / w, 1.5 / h);
+  poolPassRegion(poolBloomC, poolBloomA, poolBlur, poolBloomWideWidth, poolBloomWideHeight, poolBloomWidth, poolBloomHeight);
   poolBlur.set("dir", 1.0 / w2, 0.0);
-  poolPass(poolBloomD, poolBloomC, poolBlur);
+  poolPassRegion(poolBloomD, poolBloomC, poolBlur, poolBloomWideWidth, poolBloomWideHeight, poolBloomWideWidth, poolBloomWideHeight);
   poolBlur.set("dir", 0.0, 1.0 / h2);
-  poolPass(poolBloomC, poolBloomD, poolBlur);
+  poolPassRegion(poolBloomC, poolBloomD, poolBlur, poolBloomWideWidth, poolBloomWideHeight, poolBloomWideWidth, poolBloomWideHeight);
 }
 
 // Same pipeline as the Backrooms' render(): the scene goes into the engine's sceneFrame, which then gets
@@ -1975,8 +2183,9 @@ void poolBloom() {
 // drawn crisp on the display afterwards.
 void renderPools() {
   updateDisplaySize();
-  ensureSceneFrame();                          // the engine's scene resolution and adaptive quality, as in the Backrooms
+  poolEnsureSceneFrame();                      // stable recording targets, GPU-adaptive raymarch only
   long started = System.nanoTime();
+  poolFrameTimer.begin(viewGraphics());
 
   float t = (millis() - poolStartMs) / 1000.0;
   float ht = millis() * 0.0004;
@@ -2000,19 +2209,21 @@ void renderPools() {
   float tanY = tan(fov / 2) * lensEdge();
 
 
-  poolBuf = poolTarget(poolBuf, sceneFrame.width, sceneFrame.height);   // raymarch at the scene resolution itself
-  poolSimStep();                               // the water moves on
-  if (poolBakePasses < 220) {                  // the light keeps converging for a few seconds
-    poolBake(1);
-    if (poolBakePasses % 40 == 0 || poolBakePasses == 220) poolReadProbes();
-  }
-  PVector hz = poolLightProbe(eye.x, eye.y, eye.z);
-  poolHaze.lerp(hz, 1 - exp(-frameDt * 3));
+  poolBuf = poolTarget(poolBuf, sceneFrame.width, sceneFrame.height);   // fixed-capacity target; the active ray region follows the GPU budget
+  poolSimStep(frameDt);
+  poolFrameTimer.mark(viewGraphics(), 1);
+  poolScheduleLighting();
+  poolFrameTimer.mark(viewGraphics(), 2);
   // same sensor exposure as the Backrooms: the engine's auto exposure (iris + AGC), metered below
-  drawPoolFrame(poolBuf, eye, F, R, U, tanY, t, EXPOSURE_BASE * exposureAdapt, poolWakes);
+  drawPoolFrameRegion(poolBuf, poolRayWidth, poolRayHeight, eye, F, R, U, tanY, t, EXPOSURE_BASE * exposureAdapt, poolWakes);
   poolBloom();
 
   PGraphics display = viewGraphics(), previous = renderTarget;
+  // a freshly allocated scene frame (resolution change) comes out of the engine's filter chain one frame
+  // overexposed: warm it up with a discarded pass so the change is invisible instead of a white flash
+  int passes = sceneFrame != poolLastScene ? 2 : 1;
+  poolLastScene = sceneFrame;
+  for (int pass = 0; pass < passes; pass++) {
   sceneFrame.beginDraw();
   try {
     renderTarget = sceneFrame;
@@ -2022,16 +2233,16 @@ void renderPools() {
     v.pushStyle();
     v.imageMode(CORNER);
     v.noTint();
-    v.image(poolBuf, 0, 0, v.width, v.height);
+    v.image(poolBuf, 0, 0, v.width, v.height, 0, 0, poolRayWidth, poolRayHeight);
     v.popStyle();
-    meterCamera(v);                    // 0. the camera meters the scene for its auto exposure
+    poolMeterCamera(v);                    // 0. the camera meters the scene for its auto exposure
     v.pushStyle();
     v.imageMode(CORNER);
     v.blendMode(ADD);
     v.tint(255 * 0.20);
-    v.image(poolBloomA, 0, 0, v.width, v.height);
+    v.image(poolBloomA, 0, 0, v.width, v.height, 0, 0, poolBloomWidth, poolBloomHeight);
     v.tint(255 * 0.32);
-    v.image(poolBloomC, 0, 0, v.width, v.height);
+    v.image(poolBloomC, 0, 0, v.width, v.height, 0, 0, poolBloomWideWidth, poolBloomWideHeight);
     v.blendMode(BLEND);
     v.popStyle();
     applyLens();                       // 1. optics, shutter, CCD and camera DSP
@@ -2044,6 +2255,7 @@ void renderPools() {
   } finally {
     renderTarget = previous;
     sceneFrame.endDraw();
+  }
   }
   processing.opengl.PGraphicsOpenGL pg = (processing.opengl.PGraphicsOpenGL) display;
   pg.beginPGL();
@@ -2058,8 +2270,9 @@ void renderPools() {
   display.popStyle();
   drawPoolHUD();
   end2D();
-  // same adaptive resolution as the Backrooms' render(): the engine lowers or raises the scene quality
-  tuneRenderResolution(max((System.nanoTime() - started) / 1000000.0, frameDt * 1000));
+  poolFrameTimer.mark(display, 3);
+  poolTuneResolution((System.nanoTime() - started) / 1000000.0);
+
 }
 
 // called by applyPostTo() while in the Poolrooms: daylight white instead of the Backrooms' yellow grade
@@ -2163,6 +2376,9 @@ void drawPoolHUD() {
 // =====================================================================
 // AUDIO (patched into the engine's effects bus, so the effects volume applies)
 void startPoolAudio() {
+  stepEcho.setDelTime(0.045);
+  stepEcho.setDelAmp(0.28);
+  echoWet.setValue(0.24);
   if (!poolSynthReady) {
     poolSynthReady = true;
     poolWaterAmp = new Multiplier(0);
@@ -2190,12 +2406,14 @@ void updatePoolAudio(float dt) {
   stepEnv *= exp(-dt * 16);
   stepAmp.setValue(stepEnv);
   poolTone.setAmplitude(0.018 * (0.8 + 0.2 * sin(t * 0.21)));
-  float need = exhausted ? 1 : sq(1 - stamina / staminaMax()) * 0.6;
-  breathPhase += dt * (exhausted ? 1.6 : 1.1);
-  breathAmp.setValue(need * 0.1 * sq(max(0, sin(breathPhase * TWO_PI))) * (crouching ? 0.5 : 1));
+  breathAmp.setValue(0);
 }
 
 void stopPools() {
+  stopConcreteFootsteps();
+  echoWet.setValue(0);
+  poolReleaseBuffers();
+  renderQuality = 1; renderCostMs = 0; resolutionFrames = 0;
   if (poolSynthReady) {
     poolWaterAmp.setValue(0);
     poolSplashAmp.setValue(0);
@@ -2209,12 +2427,11 @@ void stopPools() {
 // =====================================================================
 // MENU PREVIEW: a live polaroid rendered by the same raymarcher
 void preparePoolPreview() {
+  if (poolSh == null) initPools();
   generatePools();
   packPools();
-  if (poolSh == null) initPools();
   poolResetLighting();
-  poolBake(POOL_BAKE_START);                   // multi-bounce light for the new level (~1 s)
-  poolReadProbes();
+  poolBake(POOL_BAKE_START);                   // short bootstrap; remaining work is amortized
   float bestScore = -1;
   prevX = player.x;
   prevY = player.y;
@@ -2252,8 +2469,8 @@ void drawPoolsPreview() {
   PVector U = F.cross(R);
   U.normalize();
   poolCamAmb = poolLightAt(prevX, prevY);
+  poolAdvanceLighting();
   poolPrevBuf = poolTarget(poolPrevBuf, 300, 380);
-  poolHaze = poolLightProbe(prevX, prevY, poolGroundAt(prevX, prevY) + EYE_H);
   drawPoolFrame(poolPrevBuf, new PVector(prevX, prevY, poolGroundAt(prevX, prevY) + EYE_H), F, R, U, tan(radians(32)), t,
     EXPOSURE_BASE * POOL_PREVIEW_EXPO, NO_WAKES);
 
@@ -2282,4 +2499,169 @@ void drawPoolsPreview() {
   v.imageMode(CORNER);
   v.popMatrix();
   previewLabel("POOLROOMS", "Exploração livre  ·  sem nerdolas (por enquanto)");
+}
+
+// Poolrooms GPU timing and exposure readback. All gameplay polls have a zero timeout.
+PoolFrameTimer poolFrameTimer = new PoolFrameTimer();
+PoolMeterReadback poolMeterReadback = new PoolMeterReadback();
+float poolGpuFrameMs, poolGpuSceneMs, poolGpuBakeMs;
+int poolRayWidth, poolRayHeight;
+int poolQualityUpAfter;
+
+void poolEnsureSceneFrame() {
+  // Keep recording/post targets stable; only raymarch targets follow GPU quality.
+  float quality=renderQuality;
+  try {renderQuality=1;ensureSceneFrame();} finally {renderQuality=quality;}
+  int[] size=sceneSize(sceneFrame.width,sceneFrame.height,quality);
+  poolRayWidth=size[0];poolRayHeight=size[1];
+}
+
+class PoolFrameTimer {
+  final int slots=8;
+  int[][] queries=new int[slots][4];
+  boolean[] pending=new boolean[slots];
+  int[] widths=new int[slots],heights=new int[slots];
+  int[] issued=new int[slots];boolean[] eligible=new boolean[slots];
+  int cursor,active=-1;
+  int sequence,lastAccepted=-1,warmup=20,lastWidth,lastHeight;
+  boolean initialized,supported;
+  int[] ready={0};long[] stamp=new long[4],result=new long[1];
+  com.jogamp.opengl.GL2ES2 gl(PGraphics target) {
+    return ((processing.opengl.PJOGL)target.beginPGL()).gl.getGL2ES2();
+  }
+  void begin(PGraphics display) {
+    com.jogamp.opengl.GL2ES2 gpu=gl(display);
+    try {
+      if(!initialized){
+        supported=gpu.isFunctionAvailable("glQueryCounter")&&gpu.isFunctionAvailable("glGetQueryObjectui64v");
+        if(supported)for(int[] ids:queries)gpu.glGenQueries(4,ids,0);
+        initialized=true;
+      }
+      if(!supported)return;
+      for(int slot=0;slot<slots;slot++)if(pending[slot]) {
+        gpu.glGetQueryObjectiv(queries[slot][3],com.jogamp.opengl.GL2ES2.GL_QUERY_RESULT_AVAILABLE,ready,0);
+        if(ready[0]==0)continue;
+        for(int k=0;k<4;k++){gpu.glGetQueryObjectui64v(queries[slot][k],com.jogamp.opengl.GL2ES2.GL_QUERY_RESULT,result,0);stamp[k]=result[0];}
+        if(eligible[slot]&&issued[slot]>lastAccepted&&widths[slot]==poolRayWidth&&heights[slot]==poolRayHeight) {
+          float frame=(float)((stamp[3]-stamp[0])/1000000.0d),bake=(float)((stamp[2]-stamp[1])/1000000.0d);
+          if(frame>0&&frame<1000){poolGpuFrameMs=frame;poolGpuSceneMs=max(0,frame-bake);if(bake>0.1)poolGpuBakeMs=poolGpuBakeMs==0?bake:lerp(poolGpuBakeMs,bake,0.15);}
+          lastAccepted=issued[slot];
+        }
+        pending[slot]=false;
+      }
+      active=pending[cursor]?-1:cursor;
+      if(lastWidth!=poolRayWidth||lastHeight!=poolRayHeight){warmup=max(warmup,3);lastWidth=poolRayWidth;lastHeight=poolRayHeight;}
+      if(active>=0){widths[active]=poolRayWidth;heights[active]=poolRayHeight;issued[active]=sequence++;eligible[active]=warmup==0;if(warmup>0)warmup--;
+        gpu.glQueryCounter(queries[active][0],com.jogamp.opengl.GL2ES2.GL_TIMESTAMP);cursor=(cursor+1)%slots;}
+    } finally {display.endPGL();}
+  }
+  void mark(PGraphics display,int point) {
+    if(active<0)return;
+    com.jogamp.opengl.GL2ES2 gpu=gl(display);
+    gpu.glQueryCounter(queries[active][point],com.jogamp.opengl.GL2ES2.GL_TIMESTAMP);display.endPGL();
+    if(point==3){pending[active]=true;active=-1;}
+  }
+  void release() {
+    if(initialized&&supported){PGraphics display=viewGraphics();com.jogamp.opengl.GL2ES2 gpu=gl(display);for(int[] ids:queries)gpu.glDeleteQueries(4,ids,0);display.endPGL();}
+    java.util.Arrays.fill(pending,false);initialized=supported=false;active=-1;cursor=0;
+    sequence=0;lastAccepted=-1;warmup=20;lastWidth=lastHeight=0;
+    poolGpuFrameMs=poolGpuSceneMs=poolGpuBakeMs=0;
+  }
+}
+
+class PoolMeterReadback {
+  int[] buffers=new int[2];long[] fences=new long[2];
+  int[] pixels=new int[48];
+  boolean initialized,supported;
+  boolean initialize(com.jogamp.opengl.GL base) {
+    if(initialized)return supported;
+    initialized=true;supported=base.isGL3ES3();
+    if(supported){
+      com.jogamp.opengl.GL3ES3 gpu=base.getGL3ES3();int[] old={0};
+      gpu.glGetIntegerv(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER_BINDING,old,0);
+      gpu.glGenBuffers(2,buffers,0);
+      for(int buffer:buffers){gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,buffer);gpu.glBufferData(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,48*4,null,com.jogamp.opengl.GL2ES3.GL_STREAM_READ);}
+      gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,old[0]);
+    }
+    return supported;
+  }
+  void poll() {
+    PGraphics display=viewGraphics();com.jogamp.opengl.GL base=((processing.opengl.PJOGL)display.beginPGL()).gl;
+    try {
+      if(!initialize(base))return;
+      com.jogamp.opengl.GL3ES3 gpu=base.getGL3ES3();
+      for(int slot=0;slot<2;slot++)if(fences[slot]!=0){
+        int status=gpu.glClientWaitSync(fences[slot],0,0);
+        if(status!=com.jogamp.opengl.GL3ES3.GL_ALREADY_SIGNALED&&status!=com.jogamp.opengl.GL3ES3.GL_CONDITION_SATISFIED)continue;
+        int[] old={0};gpu.glGetIntegerv(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER_BINDING,old,0);
+        gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,buffers[slot]);
+        java.nio.ByteBuffer data=gpu.glMapBufferRange(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,0,48*4,com.jogamp.opengl.GL.GL_MAP_READ_BIT);
+        if(data!=null){
+          for(int y=0;y<6;y++)for(int x=0;x<8;x++){int index=(y*8+x)*4;pixels[(5-y)*8+x]=0xff000000|((data.get(index)&255)<<16)|((data.get(index+1)&255)<<8)|(data.get(index+2)&255);}
+          gpu.glUnmapBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER);
+          cameraExposureTarget=exposureFromMeter(pixels);
+        }
+        gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,old[0]);gpu.glDeleteSync(fences[slot]);fences[slot]=0;
+      }
+    } finally {display.endPGL();}
+  }
+  void enqueue(PGraphics target) {
+    int slot=fences[0]==0?0:fences[1]==0?1:-1;if(slot<0)return;
+    com.jogamp.opengl.GL3ES3 gpu=((processing.opengl.PJOGL)target.beginPGL()).gl.getGL3ES3();
+    try {
+      int[] old={0};gpu.glGetIntegerv(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER_BINDING,old,0);
+      gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,buffers[slot]);
+      gpu.glReadPixels(0,0,8,6,com.jogamp.opengl.GL.GL_RGBA,com.jogamp.opengl.GL.GL_UNSIGNED_BYTE,0L);
+      fences[slot]=gpu.glFenceSync(com.jogamp.opengl.GL3ES3.GL_SYNC_GPU_COMMANDS_COMPLETE,0);
+      gpu.glBindBuffer(com.jogamp.opengl.GL2ES3.GL_PIXEL_PACK_BUFFER,old[0]);
+    } finally {target.endPGL();}
+  }
+  void release() {
+    if(initialized&&supported){PGraphics display=viewGraphics();com.jogamp.opengl.GL3ES3 gpu=((processing.opengl.PJOGL)display.beginPGL()).gl.getGL3ES3();
+      for(int slot=0;slot<2;slot++)if(fences[slot]!=0){gpu.glDeleteSync(fences[slot]);fences[slot]=0;}
+      gpu.glDeleteBuffers(2,buffers,0);display.endPGL();}
+    initialized=supported=false;
+  }
+}
+
+void poolMeterCamera(PGraphics target) {
+  poolMeterReadback.poll();
+  if(!poolMeterReadback.supported){meterCamera(target);return;}
+  int now=millis();if(now<meterNext)return;meterNext=now+125;
+  if(meterFrame==null){meterFrame=createGraphics(8,6,P2D);meterFrame.noSmooth();meterShader=new PShader(this,POST_VERT,METER_FRAG);}
+  processing.opengl.PGraphicsOpenGL source=(processing.opengl.PGraphicsOpenGL)target;
+  source.flush();processing.opengl.Texture signal=source.getTexture();
+  if(meterSource==null){meterSource=new PImage();meterSource.parent=this;meterSource.format=ARGB;}
+  meterSource.width=meterSource.pixelWidth=signal.width;meterSource.height=meterSource.pixelHeight=signal.height;
+  meterSource.setModified(false);((processing.opengl.PGraphicsOpenGL)meterFrame).setCache(meterSource,signal);
+  meterShader.set("appliedExposure",EXPOSURE_BASE*exposureAdapt);
+  meterFrame.beginDraw();meterFrame.imageMode(CORNER);meterFrame.noTint();meterFrame.blendMode(REPLACE);
+  meterFrame.shader(meterShader);meterFrame.image(meterSource,0,0,8,6);meterFrame.resetShader();
+  poolMeterReadback.enqueue(meterFrame);meterFrame.endDraw();source.beginPGL();source.endPGL();
+}
+
+void poolScheduleLighting() {
+  // Give gameplay the frame budget first. A single optional slice never controls resolution readiness.
+  float budget=1000.0/RENDER_TARGET_FPS;
+  if(poolGpuSceneMs>0&&poolGpuSceneMs+max(poolGpuBakeMs,0.5)>budget*0.95&&(frameCount%30)!=0)return;
+  if((frameCount&1)==0)poolAdvanceLighting();
+}
+
+void poolTuneResolution(float fallbackMs) {
+  if(!ADAPTIVE_RESOLUTION||!focused||millis()<displaySettleUntil)return;
+  if(poolFrameTimer.supported&&poolGpuFrameMs<=0)return; // shader/FBO warmup is not a gameplay sample
+  float cost=poolGpuFrameMs>0?poolGpuFrameMs:max(fallbackMs,frameDt*1000);
+  renderCostMs=renderCostMs==0?cost:lerp(renderCostMs,cost,0.05);
+  if(++resolutionFrames<45||millis()<resolutionCooldown)return;
+  float budget=1000.0/RENDER_TARGET_FPS,previous=renderQuality;
+  if(renderCostMs>budget) {
+    float predicted=renderQuality*sqrt(budget*0.8/max(renderCostMs,cost)); // headroom for view changes and gameplay
+    renderQuality=max(0.5,min(renderQuality-0.05,floor(predicted*20)/20.0));
+  } else if(resolutionFrames>=240&&millis()>=poolQualityUpAfter&&renderCostMs*sq((renderQuality+0.05)/renderQuality)<budget*0.8)
+    renderQuality=min(1,renderQuality+0.05);
+  if(renderQuality!=previous){
+    resolutionCooldown=millis()+1000;
+    poolQualityUpAfter=millis()+(renderQuality<previous?6000:4000);
+    resolutionFrames=0;poolGpuFrameMs=poolGpuSceneMs=0;
+  }
 }
