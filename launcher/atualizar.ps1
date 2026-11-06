@@ -66,9 +66,12 @@ try {
 
         Write-Host 'Compilando (leva ~1 minuto)...'
         $out = Join-Path $work 'out'
-        & $procJava "--sketch=$sketch" "--output=$out" '--variant=windows-amd64' '--export' *> $logFile
+        # Start-Process: avisos do Processing na saida de erro nao derrubam o script
+        $p = Start-Process $procJava -Wait -PassThru -NoNewWindow `
+             -ArgumentList "`"--sketch=$sketch`"", "`"--output=$out`"", '--variant=windows-amd64', '--export' `
+             -RedirectStandardOutput $logFile -RedirectStandardError "$logFile.err"
         $novo = Get-ChildItem $out -Recurse -Filter 'backrooms.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-        if (-not $novo) { throw "a compilacao falhou, veja o log em $logFile" }
+        if (-not $novo) { throw "a compilacao falhou (codigo $($p.ExitCode)), veja $logFile e $logFile.err" }
 
         # troca os arquivos do jogo, preservando os saves (*.txt)
         Get-ChildItem $gameDir | Where-Object { $_.Extension -ne '.txt' } | Remove-Item -Recurse -Force
