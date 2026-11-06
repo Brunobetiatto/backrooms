@@ -8,3 +8,7 @@ settings.txt
 # Processing build output
 application.*/
 out/
+
+# jogo instalado e Processing do NerdolasBackrooms.exe
+jogo/
+.ferramentas/

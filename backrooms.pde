@@ -1357,6 +1357,16 @@ void settings() {
   pixelDensity(1); noSmooth();
 }
 
+// The UI is laid out for 1360x900 and scaled up to the screen (1.6x on 1440p, 2.4x on 4K), so
+// glyphs rasterised at their nominal size were magnified into stair-stepped edges. Fonts are
+// rasterised at a "density" (the mechanism Processing uses for Retina screens): the glyph images
+// get 2-3x the pixels while every textSize/textFont call keeps drawing at the same size.
+PFont sharpFont(String name,int size){
+  int density=constrain(ceil(displayHeight/900.0),1,3);
+  java.awt.Font base=(java.awt.Font)createFont(name,size,true).getNative();
+  return base==null?createFont(name,size,true):new PFont(base.deriveFont((float)size*density),true,null,false,density);
+}
+
 void setup() {
   loadFpsPreference();
   frameRate(1000);       // once, uncapped: paceFrame() holds each frame to the chosen limit
@@ -1412,12 +1422,12 @@ void setup() {
   loadSettings();
   applyVolumes();
 
-  fontBig      = createFont("SansSerif.bold", 96, true);
-  fontUI       = createFont("SansSerif.bold", 32, true);
-  fontMono     = createFont("Monospaced.bold", 28, true);
-  fontGraffiti = createFont("SansSerif.bold", 110, true);
-  fontHud      = createFont("Impact", 48, true);
-  fontMail     = createFont("SansSerif", 22, true);
+  fontBig      = sharpFont("SansSerif.bold", 96);
+  fontUI       = sharpFont("SansSerif.bold", 32);
+  fontMono     = sharpFont("Monospaced.bold", 28);
+  fontGraffiti = sharpFont("SansSerif.bold", 110);
+  fontHud      = sharpFont("Impact", 48);
+  fontMail     = sharpFont("SansSerif", 22);
 
   viewGraphics().textureMode(NORMAL);
   viewGraphics().textureWrap(REPEAT);
@@ -1533,8 +1543,8 @@ void draw() {
   applyLook();
   if(ENABLE_VISUAL_DEBUG && visualDebugOpen){drawVisualDebug();tickUiAudio(dt);return;}
 
-  if (state == PLAYING && !paused && !focused) pauseGame();   // alt-tab pauses
-  if (state == PLAYING && paused) {
+  if (pausable() && !paused && !focused) pauseGame();   // alt-tab pauses
+  if (pausable() && paused) {
     drawPause();
   } else if (state == PLAYING) {
     update(dt);
@@ -6706,8 +6716,12 @@ void cycleLineup(int dir) {
 
 // =====================================================================
 // PAUSE MENU + SOUND SETTINGS
+// The Backrooms runs and the Poolrooms share one pause menu.
+boolean pausable() { return state == PLAYING || state == POOL; }
+boolean inPause() { return pausable() && paused; }
+
 void pauseGame() {
-  if (state != PLAYING || paused) return;
+  if (!pausable() || paused) return;
   paused = true;
   pauseStart = millis();
   pausePage = 0;
@@ -6720,16 +6734,22 @@ void pauseGame() {
   pauseVoices();
   if (flashSnd != null) flashSnd.stop();
   if (clanks != null) for (AudioSample sample : clanks) sample.stop();
+  if (state == POOL) pausePoolAudio();
 }
 
 void resumeGame() {
   if (!paused) return;
   paused = false;
-  shiftClock(millis() - pauseStart);
+  if (state == POOL) {
+    poolStartMs += millis() - pauseStart;      // the clock on the OSD stops while paused
+    resumePoolAudio();
+  } else {
+    shiftClock(millis() - pauseStart);
+    for (Enemy e : enemies) voices[e.ch].loop();
+  }
   lastMs = millis();
   releaseKeys();
   lockMouse(true);
-  for (Enemy e : enemies) voices[e.ch].loop();
   saveSettings();
 }
 
@@ -6785,6 +6805,11 @@ void pauseAction(int i) {
   } else if (i == 3) {
     paused = false;
     saveSettings();
+    if (state == POOL) {                       // a fresh Poolrooms
+      stopPools();
+      startPools();
+      return;
+    }
     endRun(false);
     startRun(gameMode, runEntry);
   } else if (i == 4) {
@@ -6836,7 +6861,7 @@ void pauseMouse(boolean click) {
 
 void drawPause() {
   if (pauseShot == null) {                    // freeze the last frame as the backdrop
-    render();
+    if (state == POOL) renderPools(); else render();
     pauseShot = viewGraphics().get();
   }
   viewGraphics().background(0);
@@ -6866,9 +6891,10 @@ void drawPause() {
       viewGraphics().fill(sel ? 255 : 120);
       viewGraphics().text((sel ? ">> " : "    ") + PAUSE_OPTS[i], 84, pauseOptY(i));
     }
-    String[] desc = {"Voltar para os Backrooms.", "Volume geral, ambiente, efeitos e vozes.",
+    boolean pool = state == POOL;
+    String[] desc = {pool ? "Voltar para os Poolrooms." : "Voltar para os Backrooms.", "Volume geral, ambiente, efeitos e vozes.",
       "Tela cheia, tamanho da janela e redimensionamento livre.",
-      "Começar esta partida de novo.", "Abandonar a partida."};
+      pool ? "Gerar um Poolrooms novo." : "Começar esta partida de novo.", pool ? "Sair dos Poolrooms." : "Abandonar a partida."};
     viewGraphics().textSize(17);
     viewGraphics().fill(170);
     viewGraphics().text(desc[pauseSel], 88, pauseOptY(PAUSE_OPTS.length) + 4);
@@ -6931,6 +6957,7 @@ void applyVolumes() {
 }
 
 void loadSettings() {
+  pickDefaultWindowSize();   // replaced below by the saved size, if there is one
   if (!new File(sketchPath("settings.txt")).exists()) return;
   for (String line : loadStrings("settings.txt")) {
     String[] kv = split(line.trim(), '=');
@@ -6939,6 +6966,7 @@ void loadSettings() {
     if(kv[0].equals("windowW")){windowedW=constrain(int(kv[1]),640,7680);continue;}
     if(kv[0].equals("windowH")){windowedH=constrain(int(kv[1]),360,4320);continue;}
     if(kv[0].equals("gfx")){gfxQ=constrain(int(kv[1]),0,GFX_NAMES.length-1);continue;}
+    if(kv[0].equals("cam")){camQ=constrain(int(kv[1]),0,CAM_NAMES.length-1);continue;}
     if(kv[0].equals("fps")){fpsQ=constrain(int(kv[1]),0,FPS_NAMES.length-1);continue;}
     if(!kv[0].equals("vol"))continue;
     String[] p = split(kv[1], ',');
@@ -6947,7 +6975,7 @@ void loadSettings() {
 }
 
 void saveSettings() {
-  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH,"gfx="+gfxQ,"fps="+fpsQ});
+  saveStrings(sketchPath("settings.txt"), new String[]{"vol="+join(nf(vol,0),","),"displayMode="+displayModePref,"windowW="+windowedW,"windowH="+windowedH,"gfx="+gfxQ,"fps="+fpsQ,"cam="+camQ});
 }
 
 // =====================================================================
@@ -6970,14 +6998,14 @@ void mouseMoved() {
     int h = hoveredOption();
     if (h >= 0) menuSelect(h);
   }
-  if (state == PLAYING && paused) pauseMouse(false);
+  if (inPause()) pauseMouse(false);
   if(state==MENU && menuPage==3)videoMouse(false);
   look();
 }
 
 void mouseDragged() {
   if(ENABLE_VISUAL_DEBUG && visualDebugOpen){visualDebugMouse(false,true);return;}
-  if (state == PLAYING && paused) pauseMouse(false);
+  if (inPause()) pauseMouse(false);
   look();
 }
 
@@ -6991,7 +7019,7 @@ float lookAccX, lookAccY;
 int lookLastX = Integer.MIN_VALUE, lookLastY;
 
 boolean lookActive() {
-  return focused && ((state == PLAYING && !paused) || state == POOL) && !(ENABLE_VISUAL_DEBUG && visualDebugOpen);
+  return focused && pausable() && !paused && !(ENABLE_VISUAL_DEBUG && visualDebugOpen);
 }
 
 // NEWT thread: one pointer event
@@ -7080,7 +7108,7 @@ void mousePressed() {
         break;
       }
     }
-  } else if (state == PLAYING && paused) {
+  } else if (inPause()) {
     pauseMouse(true);
   } else if (state == PLAYING && mouseButton == LEFT) {
     fireTaser();
@@ -7118,7 +7146,7 @@ void keyPressed() {
     if (state == MENU) {
       if (menuPage != 0) menuPageTo(0);
       else exit();
-    } else if (state == PLAYING) {
+    } else if (pausable()) {
       if (paused) pauseKey(ESC);
       else pauseGame();
     } else {
@@ -7138,12 +7166,12 @@ void keyPressed() {
     menuKey(kc);
     return;
   }
-  if (state == POOL) {
-    poolKey(kc);
+  if (inPause()) {
+    pauseKey(kc);
     return;
   }
-  if (state == PLAYING && paused) {
-    pauseKey(kc);
+  if (state == POOL) {
+    poolKey(kc);
     return;
   }
   if (state == PLAYING) {
@@ -9347,8 +9375,19 @@ String[] CODEC_INVERSE_X_FRAG = {
 // The modern recording follows the render resolution; LOW_RES_RECORDING provides the
 // deliberately soft legacy profile. The gameplay HUD stays at display resolution.
 final boolean START_FULLSCREEN=true, ADAPTIVE_RESOLUTION=true;
-final int RENDER_MAX_HEIGHT=900, RENDER_MAX_WIDTH=1600, RENDER_MIN_HEIGHT=540;
+// The cap is on lines (height): ultrawide screens keep the same vertical detail as 16:9 and
+// render wider instead of being squeezed to 1600 px. RENDER_MAX_WIDTH only guards 32:9 extremes.
+// 1080 lines = 1:1 on Full HD and the same bound the MPEG-2 copy uses (CODEC_LINES); slower GPUs
+// are covered by the adaptive resolution, which drops toward 50% when a frame misses 60 fps.
+final int RENDER_MAX_HEIGHT=1080, RENDER_MAX_WIDTH=3840, RENDER_MIN_HEIGHT=540;
+final int RENDER_SHARP_MAX_HEIGHT=2160, RENDER_SHARP_MAX_WIDTH=7680;   // IMAGEM NÍTIDA: up to the screen's own size
 final float RENDER_TARGET_FPS=60;
+final int SCENE_MSAA=4;
+// The Poolrooms raymarches every pixel (far heavier than the Backrooms' meshes): it gets the same
+// 1080 lines as FILMADORA in both image modes (the native screen made the adaptive resolution swing
+// between 50% and 70%), and no MSAA (its image is one full-screen shader quad: nothing to antialias).
+final int RENDER_POOL_MAX_HEIGHT=1080, RENDER_POOL_MAX_PIXELS=3840*1080;
+int sceneFrameMsaa=-1;
 PGraphics sceneFrame;
 PGraphics renderTarget;
 PGraphics viewGraphics() { return renderTarget==null?g:renderTarget; }
@@ -9370,9 +9409,21 @@ float uiMouseY() { return mouseY/uiScale(); }
 void beginUi() { viewGraphics().pushMatrix(); viewGraphics().scale(uiScale()); }
 void endUi() { viewGraphics().popMatrix(); }
 
+// Processing's filter() keeps a copy of the screen in a texture sized on the first call and
+// only rebuilds it when the GL context is lost, never on resize: after a window/fullscreen
+// switch the old frame bled through stretched, as a ghost behind the menu. Dropping it on
+// every size change makes filter() allocate one at the new size (the old one is GC-released).
+void resetFilterTexture() {
+  try {
+    java.lang.reflect.Field f=processing.opengl.PGraphicsOpenGL.class.getDeclaredField("filterTexture");
+    f.setAccessible(true); f.set(g,null);
+  } catch(Exception e) { println("resetFilterTexture: "+e); }
+}
+
 void updateDisplaySize() {
   if(width==displayW && height==displayH) return;
   displayW=width; displayH=height; displaySettleUntil=millis()+200;
+  resetFilterTexture();
   resolutionFrames=0; renderCostMs=0; resolutionCooldown=millis()+2000;
   if(!displayFullscreen && !displayModeChanging && win!=null) {
     if(win.isMaximizedHorz() && win.isMaximizedVert())displayModePref=2;
@@ -9380,11 +9431,15 @@ void updateDisplaySize() {
     videoSavePending=true;videoSaveAfter=millis()+750;
   }
   // Avoid treating the OS pointer recenter during a resize as a camera turn.
-  if(((state==PLAYING && !paused) || state==POOL) && focused) { skipMouse=2; }
+  if(pausable() && !paused && focused) { skipMouse=2; }
 }
 
 int[] sceneSize(int w,int h,float quality) {
-  float fit=min(1,min(RENDER_MAX_HEIGHT/(float)max(1,h),RENDER_MAX_WIDTH/(float)max(1,w)))*(gfxLight()?LIGHT_RENDER_SCALE:1);
+  int maxH=sharpImage()?RENDER_SHARP_MAX_HEIGHT:RENDER_MAX_HEIGHT,maxW=sharpImage()?RENDER_SHARP_MAX_WIDTH:RENDER_MAX_WIDTH;
+  float fit=state==POOL
+    ? min(1,min(RENDER_POOL_MAX_HEIGHT/(float)max(1,h),sqrt(RENDER_POOL_MAX_PIXELS/(float)max(1,w*h))))
+    : min(1,min(maxH/(float)max(1,h),maxW/(float)max(1,w)));
+  fit*=gfxLight()?LIGHT_RENDER_SCALE:1;
   float minQuality=min(1,RENDER_MIN_HEIGHT/max(1,h*fit));
   fit*=constrain(quality,minQuality,1);
   return new int[]{max(16,round(w*fit)),max(16,round(h*fit))};
@@ -9395,13 +9450,18 @@ void ensureSceneFrame() {
   // While the user drags a window edge, stretch the existing recording instead
   // of allocating and disposing ten codec framebuffers on every resize event.
   if(sceneFrame!=null && millis()<displaySettleUntil) return;
-  if(sceneFrame!=null && sceneFrame.width==size[0] && sceneFrame.height==size[1]) return;
+  int msaa=state==POOL?1:SCENE_MSAA;
+  if(sceneFrame!=null && sceneFrame.width==size[0] && sceneFrame.height==size[1] && sceneFrameMsaa==msaa) return;
   if(sceneFrame!=null) {
     float sx=size[0]/(float)sceneFrame.width,sy=size[1]/(float)sceneFrame.height;
     for(Particle p:parts){p.x*=sx;p.y*=sy;p.vx*=sx;p.vy*=sy;}
     sceneFrame.dispose();
   }
-  sceneFrame=createGraphics(size[0],size[1],P3D); sceneFrame.noSmooth();
+  // 4x MSAA: geometry edges (walls, vents, signs) no longer stair-step. Every read of this frame
+  // goes through getTexture()/filter(), which resolve the multisampled buffer first.
+  sceneFrame=createGraphics(size[0],size[1],P3D);
+  if(msaa>1)sceneFrame.smooth(msaa); else sceneFrame.noSmooth();
+  sceneFrameMsaa=msaa;
   codecForceI=true; meterNext=0; resolutionFrames=0;
 }
 
@@ -9490,7 +9550,38 @@ void toggleDisplayMode() { applyDisplayMode(displayFullscreen?1:0,windowedW,wind
 
 
 // Display preferences. Mode 0 = fullscreen, 1 = resizable window, 2 = maximized.
-final int[][] WINDOW_SIZES={{960,540},{1024,768},{1280,720},{1360,900},{1600,900},{1920,1080}};
+final int[][] WINDOW_SIZES={{960,540},{1024,768},{1280,720},{1360,900},{1600,900},{1920,1080},
+  {2560,1080},{2560,1440},{3440,1440},{3840,1600},{3840,2160},{5120,1440},{5120,2160}};
+// Only sizes that fit whole on this monitor, title bar and taskbar included, are offered (the
+// same margins applyDisplayMode uses); the first ones always count, so the list is never empty.
+// The monitor's full size is what TELA CHEIA / JANELA MAXIMIZADA are for.
+// One entry past the presets: the monitor's own resolution, which is applied as TELA CHEIA
+// (a bordered window that big would not fit on the screen).
+final int NATIVE_SIZE=WINDOW_SIZES.length;
+int nearestFittingSize(int w,int h){
+  int best=2;long nearest=Long.MAX_VALUE;
+  for(int k=0;k<WINDOW_SIZES.length;k++){
+    if(!windowSizeFits(k))continue;
+    long d=(long)sq(WINDOW_SIZES[k][0]-w)+(long)sq(WINDOW_SIZES[k][1]-h);
+    if(d<nearest){nearest=d;best=k;}
+  }
+  return best;
+}
+boolean windowSizeFits(int k){return k<3||k==NATIVE_SIZE||(WINDOW_SIZES[k][0]<=displayWidth-80&&WINDOW_SIZES[k][1]<=displayHeight-100);}
+// Default window (first run, before any saved size): the largest preset that fits the monitor
+// with room for the title bar, preferring the monitor's own shape (16:9 on 16:9, 21:9 on ultrawide).
+void pickDefaultWindowSize(){
+  float screenAspect=displayWidth/(float)max(1,displayHeight);
+  int best=-1,bestShaped=-1;
+  for(int k=0;k<WINDOW_SIZES.length;k++){
+    int w=WINDOW_SIZES[k][0],h=WINDOW_SIZES[k][1];
+    if(w>displayWidth-80||h>displayHeight-100)continue;
+    if(best<0||w*h>WINDOW_SIZES[best][0]*WINDOW_SIZES[best][1])best=k;
+    if(abs(w/(float)h-screenAspect)<0.15&&(bestShaped<0||w*h>WINDOW_SIZES[bestShaped][0]*WINDOW_SIZES[bestShaped][1]))bestShaped=k;
+  }
+  int k=bestShaped>=0?bestShaped:best;
+  if(k>=0){windowedW=WINDOW_SIZES[k][0];windowedH=WINDOW_SIZES[k][1];}
+}
 int displayModePref=START_FULLSCREEN?0:1,windowedW=1280,windowedH=720;
 int videoSel=0,videoMode=0,videoSize=2;
 // Graphics quality. LEVE drops the per-pixel shadow rays (lamps, camera light, fog), contact
@@ -9499,6 +9590,13 @@ final String[] GFX_NAMES={"ALTA","LEVE"};
 final float LIGHT_RENDER_SCALE=0.8;
 int gfxQ=0;                                    // saved in settings.txt
 boolean gfxLight(){return gfxQ==1;}
+// Image. FILMADORA is the original camcorder look. NÍTIDA switches off only its softening stages
+// (tape luma/chroma blur, the MPEG-2 copy, lens blur and shutter motion blur) and renders the
+// scene up to the screen's own resolution instead of 900 lines. Colour grade, vignette, lens
+// distortion, noise and the camera OSD stay. The adaptive resolution still steps in if the GPU lags.
+final String[] CAM_NAMES={"FILMADORA (ORIGINAL)","NÍTIDA"};
+int camQ=0;                                    // saved in settings.txt
+boolean sharpImage(){return camQ==1;}
 // Frame cap. MONITOR follows the display's refresh rate: when the GPU keeps up it's the smoothest choice,
 // since any cap the monitor doesn't divide evenly shows frames for uneven times (judder).
 final String[] FPS_NAMES={"60","120","MONITOR"};
@@ -9536,7 +9634,9 @@ int videoSaveAfter=0;
 void openVideoSettings() {
   videoSel=0;videoMode=displayModePref;
   long nearest=Long.MAX_VALUE;
-  for(int k=0;k<WINDOW_SIZES.length;k++) {
+  if(videoMode==0){videoSize=NATIVE_SIZE;nearest=-1;}
+  for(int k=0;k<WINDOW_SIZES.length&&nearest>=0;k++) {
+    if(!windowSizeFits(k))continue;
     long d=(long)sq(WINDOW_SIZES[k][0]-windowedW)+(long)sq(WINDOW_SIZES[k][1]-windowedH);
     if(d<nearest){nearest=d;videoSize=k;}
   }
@@ -9546,18 +9646,31 @@ void closeVideoSettings() {
   if(state==MENU){menuPageTo(0);menuSel=6;}
   else{pausePage=0;pauseSel=2;}
 }
+// Mode and size apply as soon as they change. Quick repeated presses are coalesced:
+// the latest choice is applied once the previous switch has finished.
+boolean videoApplyPending=false;
 void changeVideoSetting(int direction) {
-  if(videoSel==0)videoMode=(videoMode+direction+3)%3;
-  else if(videoSel==1){videoSize=(videoSize+direction+WINDOW_SIZES.length)%WINDOW_SIZES.length;videoMode=1;}
+  if(videoSel==0){
+    videoMode=(videoMode+direction+3)%3;videoApplyPending=true;
+    if(videoMode==0)videoSize=NATIVE_SIZE;                      // fullscreen is always the monitor's size
+    else if(videoSize==NATIVE_SIZE)videoSize=nearestFittingSize(windowedW,windowedH);
+  }
+  else if(videoSel==1){
+    do videoSize=(videoSize+direction+NATIVE_SIZE+1)%(NATIVE_SIZE+1); while(!windowSizeFits(videoSize));
+    videoMode=videoSize==NATIVE_SIZE?0:1;videoApplyPending=true;
+  }
   else if(videoSel==2){gfxQ=(gfxQ+direction+GFX_NAMES.length)%GFX_NAMES.length;codecForceI=true;meterNext=0;saveSettings();}
   else if(videoSel==3){fpsQ=(fpsQ+direction+FPS_NAMES.length)%FPS_NAMES.length;applyFrameRate();saveSettings();}
+  else if(videoSel==4){camQ=(camQ+direction+CAM_NAMES.length)%CAM_NAMES.length;codecForceI=true;meterNext=0;resolutionFrames=0;saveSettings();}
 }
 void activateVideoSetting() {
-  if(videoSel<4)changeVideoSetting(1);
-  else if(videoSel==4) {
-    windowedW=WINDOW_SIZES[videoSize][0];windowedH=WINDOW_SIZES[videoSize][1];
-    applyDisplayMode(videoMode,windowedW,windowedH);
-  } else closeVideoSettings();
+  if(videoSel<5)changeVideoSetting(1);
+  else closeVideoSettings();
+}
+String videoValue(int k) {
+  String[] modes={"TELA CHEIA","JANELA REDIMENSIONÁVEL","JANELA MAXIMIZADA"};
+  String size=videoSize==NATIVE_SIZE?displayWidth+" × "+displayHeight+" (TELA CHEIA)":WINDOW_SIZES[videoSize][0]+" × "+WINDOW_SIZES[videoSize][1];
+  return k==0?modes[videoMode]:k==1?size:k==2?GFX_NAMES[gfxQ]:k==3?fpsLabel(fpsQ):CAM_NAMES[camQ];
 }
 void videoKey(int kc) {
   if(kc==ESC||kc==BACKSPACE){closeVideoSettings();return;}
@@ -9575,33 +9688,38 @@ int videoHovered() {
 void videoMouse(boolean click) {
   int h=videoHovered();if(h<0)return;videoSel=h;
   if(click){
-    if(h<4 && uiMouseX()<470)changeVideoSetting(-1);
-    else activateVideoSetting();
+    if(h<5){
+      // "<  value  >" starts at x=490: its left half goes back, its right half (and the label) forward.
+      PGraphics p=viewGraphics();p.textFont(fontUI);p.textSize(24);
+      float mid=490+p.textWidth("<  "+videoValue(h)+"  >")/2;
+      changeVideoSetting(uiMouseX()>=490&&uiMouseX()<mid?-1:1);
+    } else activateVideoSetting();
   }
 }
 // Called inside the existing responsive logical UI transform.
 void drawVideoSettings() {
   PGraphics p=viewGraphics();p.noStroke();p.textFont(fontBig);p.textSize(72);p.textAlign(LEFT,BASELINE);p.fill(235);p.text("VÍDEO",80,170);
-  String[] modes={"TELA CHEIA","JANELA REDIMENSIONÁVEL","JANELA MAXIMIZADA"};
-  String[] labels={"MODO","TAMANHO DA JANELA","QUALIDADE","LIMITE DE FPS","APLICAR","VOLTAR"};
+  String[] labels={"MODO","TAMANHO DA JANELA","QUALIDADE","LIMITE DE FPS","IMAGEM","VOLTAR"};
   p.textFont(fontUI);p.textAlign(LEFT,CENTER);
   for(int k=0;k<6;k++) {
     boolean selected=videoSel==k;float y=pauseOptY(k);
     p.fill(selected?255:140);p.textSize(30);p.text((selected?">> ":"    ")+labels[k],84,y);
-    if(k<4){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
-      String value=k==0?modes[videoMode]:k==1?min(WINDOW_SIZES[videoSize][0],max(640,displayWidth-80))+" × "+min(WINDOW_SIZES[videoSize][1],max(360,displayHeight-100)):k==2?GFX_NAMES[gfxQ]:fpsLabel(fpsQ);
-      p.text("<  "+value+"  >",490,y);
+    if(k<5){p.textSize(24);p.fill(selected?color(235,220,175):color(170));
+      p.text("<  "+videoValue(k)+"  >",490,y);
     }
   }
   p.textSize(17);p.fill(180);
   if(videoSel==2){
     p.text("LEVE desliga as sombras dinâmicas, o escurecimento dos cantos e a névoa de luz,",88,pauseOptY(6)+14);
-    p.text("e renderiza a cena em 80%. Bem mais leve para a placa de vídeo. Vale na hora.",88,pauseOptY(6)+48);
+    p.text("e renderiza a cena em 80%, deixando o jogo bem mais leve para a placa de vídeo.",88,pauseOptY(6)+48);
+  } else if(videoSel==4){
+    p.text("NÍTIDA tira o desfoque da filmadora (fita VHS, compressão, lente e rastro de movimento)",88,pauseOptY(6)+14);
+    p.text("e renderiza na resolução da sua tela. Cores, vinheta e interface da câmera continuam.",88,pauseOptY(6)+48);
   } else if(videoSel==3){
     p.text("MONITOR acompanha a taxa da sua tela e é o mais suave quando a placa aguenta.",88,pauseOptY(6)+14);
     p.text("60 alivia a placa de vídeo. Se o jogo não alcança o limite, use QUALIDADE LEVE.",88,pauseOptY(6)+48);
   } else {
-    p.text("Escolha JANELA para sair da tela cheia e arraste as bordas para ajustar livremente.",88,pauseOptY(6)+14);
+    p.text("MODO e TAMANHO mudam na hora. Em JANELA, arraste as bordas para ajustar livremente.",88,pauseOptY(6)+14);
     p.text("A resolução da imagem se adapta automaticamente; a interface acompanha o tamanho da janela.",88,pauseOptY(6)+48);
   }
   if(displayModeChanging){p.fill(235,220,175);p.text("Aplicando...",88,pauseOptY(6)+90);}
@@ -9609,12 +9727,13 @@ void drawVideoSettings() {
 }
 void updateVideoPreferences() {
   if(videoStartupPending){videoStartupPending=false;if(displayModePref!=0||!displayFullscreen)applyDisplayMode(displayModePref,windowedW,windowedH);}
+  if(videoApplyPending && !displayModeChanging){videoApplyPending=false;applyDisplayMode(videoMode,videoSize==NATIVE_SIZE?windowedW:WINDOW_SIZES[videoSize][0],videoSize==NATIVE_SIZE?windowedH:WINDOW_SIZES[videoSize][1]);}
   if(videoSavePending && !displayModeChanging && millis()>=videoSaveAfter){videoSavePending=false;saveSettings();}
 }
 void applyDisplayMode(final int mode,int requestedW,int requestedH) {
   if(win==null||displayModeChanging)return;
   final int w=constrain(requestedW,640,max(640,displayWidth-80)),h=constrain(requestedH,360,max(360,displayHeight-100));
-  if(state==PLAYING&&!paused)pauseGame();
+  if(pausable()&&!paused)pauseGame();
   displayModeChanging=true;displayModePref=mode;displayFullscreen=mode==0;
   windowedW=w;windowedH=h;
   java.awt.EventQueue.invokeLater(new Runnable(){public void run(){
@@ -9698,6 +9817,7 @@ void initVisualDebug(){
   visualControl("flash","Camera light (-1 = auto)",3,-1,-1,1,1);
 }
 float visualValue(String id,float normal){
+  if(sharpImage()&&(id.equals("tape")||id.equals("codec")||id.equals("blur")||id.equals("motion")))normal=0;
   if(!ENABLE_VISUAL_DEBUG||!visualDebugOpen||visualDebugBaseline)return normal;
   VisualDebugControl c=visualDebugById.get(id);return c==null?normal:c.value;
 }
@@ -9712,7 +9832,7 @@ void toggleVisualDebug(){
   if(!ENABLE_VISUAL_DEBUG)return;
   if(visualDebugOpen){closeVisualDebug();return;}
   initVisualDebug();visualDebugWasPaused=paused;visualDebugPausePage=pausePage;visualDebugPauseSel=pauseSel;
-  if(state==PLAYING&&!paused)pauseGame();
+  if(pausable()&&!paused)pauseGame();
   visualDebugOpen=true;visualDebugBaseline=false;codecForceI=true;
   releaseKeys();lockMouse(false);
 }

@@ -697,6 +697,37 @@ String[] POOL_COMMON = poolJoin(POOL_DATA_SAMPLING, new String[]{
 });
 
 String[] POOL_FUNCS = {
+  // ---- faces pressed into the wall tiles (the nerdolas' photos, embossed in the tiles' own glaze).
+  // faceA: xyz = centre of the face on the wall, w = atlas slot; faceB: xy = wall normal (into the room),
+  // z/w = half width/height. The atlas stores the shading factor / 1.6 (1.0 = a plain tile).
+  "uniform vec4 faceA[8];",
+  "uniform vec4 faceB[8];",
+  "uniform int faceCount;",
+  "uniform float faceSlots;",
+  "uniform sampler2D faceAtlas;",
+  "uniform vec2 faceTexel;",
+  // returns the colour factor; tilt = how the relief bends the tile's normal (glints and reflections follow it)
+  "float pressedFace(vec3 p, vec3 n, out vec3 tilt) {",
+  "  tilt = vec3(0.0);",
+  "  for (int k = zeroI; k < 8; k++) {",
+  "    if (k >= faceCount) break;",
+  "    vec4 a = faceA[k];",
+  "    vec4 b = faceB[k];",
+  "    if (dot(n.xy, b.xy) < 0.7) continue;",
+  "    vec2 d = p.xy - a.xy;",
+  "    if (abs(dot(d, b.xy)) > 6.0) continue;",
+  "    vec2 q = vec2(dot(d, vec2(b.y, -b.x)) / b.z, (a.z - p.z) / b.w) * 0.5 + 0.5;",   // (b.y, -b.x) = screen right when facing the wall
+  "    if (q.x <= 0.0 || q.x >= 1.0 || q.y <= 0.0 || q.y >= 1.0) continue;",
+  "    vec2 fuv = vec2((a.w + q.x) / faceSlots, q.y);",
+  "    float h = poolDataFetch(faceAtlas, fuv).r;",
+  "    float gx = poolDataFetch(faceAtlas, fuv + vec2(faceTexel.x * 2.0, 0.0)).r - h;",
+  "    float gy = poolDataFetch(faceAtlas, fuv + vec2(0.0, faceTexel.y * 2.0)).r - h;",
+  "    vec2 g = clamp(vec2(gx, gy) * 5.0, -0.35, 0.35);",                  // brighter = pressed further out
+  "    tilt = -vec3(b.y, -b.x, 0.0) * g.x + vec3(0.0, 0.0, 1.0) * g.y;",  // image x = screen right, image y = down
+  "    return h * 1.6;",
+  "  }",
+  "  return 1.0;",
+  "}",
   // ---- water surface normal: the simulated height field + faint capillary ripples, filtered with distance
   "vec3 waterN(vec2 xy, float t) {",
   "  float fw = t * pixAng;",
@@ -843,6 +874,11 @@ String[] POOL_FUNCS = {
   "    tileC = mix(tileC, basinC, basin);",
   "    groutC = mix(groutC, basinC * 0.72, basin);",
   "    tileC *= 0.97 + 0.06 * g.y;",
+  "    if (!floorS && mat < 1.5 && faceCount > 0) {",                     // the grout still runs across it
+  "      vec3 ft;",
+  "      tileC *= pressedFace(p, n, ft);",
+  "      nP = normalize(nP + ft);",
+  "    }",
   "    alb = mix(tileC, groutC, g.x);",
   "    alb *= mix(vec3(0.84, 0.84, 0.80), vec3(1.0), mix(1.0, ao, 0.6 + 0.4 * g.x));",   // grime settles where light can't reach
   "    if (!floorS && abs(p.z - WATER) < 2.2) alb *= 0.84;",      // the waterline
@@ -1179,6 +1215,59 @@ String[] POOL_BLUR = {
   "}"
 };
 
+// ---- faces pressed into the tiles (ported from the poolrooms-lino branch): a few big, rare faces on
+// tall walls. Each photo becomes a shading factor (brightness + a slight emboss lit from the top left,
+// fading into plain tile at its edges); the shader multiplies it into the wall's own tile colour, so every
+// palette gets its own tint and the grout keeps running across the face.
+final int POOL_FACES = 6;                      // per level
+final float POOL_FACE_Z = 200, POOL_FACE_HW = 120, POOL_FACE_HH = 150;   // centre height, half size
+final int FACE_TW = 128, FACE_TH = 160;        // atlas slot
+PImage poolFaceAtlas;
+float[] poolFaceA = new float[32], poolFaceB = new float[32];
+int poolFaceN;
+
+void makePoolFaceAtlas() {
+  poolFaceAtlas = createImage(FACE_TW * NAMES.length, FACE_TH, RGB);
+  poolFaceAtlas.loadPixels();
+  for (int k = 0; k < NAMES.length; k++) {
+    PImage src = faces[k].get(faces[k].width / 8, 0, faces[k].width * 3 / 4, faces[k].height * 15 / 16);
+    src.resize(FACE_TW, FACE_TH);
+    src.filter(BLUR, 1);                       // only the broad shapes survive as relief
+    src.loadPixels();
+    for (int y = 0; y < FACE_TH; y++) for (int x = 0; x < FACE_TW; x++) {
+      float l = brightness(src.pixels[y * FACE_TW + x]) / 255.0;
+      float l2 = brightness(src.pixels[min(FACE_TH - 1, y + 2) * FACE_TW + min(FACE_TW - 1, x + 2)]) / 255.0;
+      float edge = constrain(min(min(x, FACE_TW - 1 - x), min(y, FACE_TH - 1 - y)) / 20.0, 0, 1);
+      float face = 0.42 + 0.68 * pow(l, 0.85) + (l - l2) * 1.4;
+      float v = lerp(1, face, edge * edge * (3 - 2 * edge));
+      poolFaceAtlas.pixels[y * poolFaceAtlas.width + k * FACE_TW + x] = color(constrain(v / 1.6, 0, 1) * 255);
+    }
+  }
+  poolFaceAtlas.updatePixels();
+}
+
+void placePoolFaces() {
+  poolFaceN = 0;
+  java.util.ArrayList<PVector> used = new java.util.ArrayList<PVector>();
+  for (int tries = 0; tries < 4000 && poolFaceN < POOL_FACES; tries++) {
+    int[] c = randomOpenCell();
+    int i = c[0], j = c[1];
+    if ((pStyle[i][j] - 1) / 4 < 1) continue;  // barrel vaults curve in above 200: only flat, tall walls
+    if (pElev[i][j] != E_LOW || pFeat[i][j] != F_NONE) continue;
+    int[] d = DIRS[(int) random(4)];
+    if (!isWall(i + d[0], j + d[1])) continue;
+    float cx = (i + 0.5) * CELL + d[0] * CELL * 0.5, cy = (j + 0.5) * CELL + d[1] * CELL * 0.5;
+    boolean near = false;
+    for (PVector u : used) if (dist(u.x, u.y, cx, cy) < CELL * 3) near = true;
+    if (near) continue;
+    used.add(new PVector(cx, cy));
+    int k = poolFaceN * 4;
+    poolFaceA[k] = cx; poolFaceA[k + 1] = cy; poolFaceA[k + 2] = POOL_FACE_Z; poolFaceA[k + 3] = (int) random(NAMES.length);
+    poolFaceB[k] = -d[0]; poolFaceB[k + 1] = -d[1]; poolFaceB[k + 2] = POOL_FACE_HW; poolFaceB[k + 3] = POOL_FACE_HH;
+    poolFaceN++;
+  }
+}
+
 void initPools() {
   poolSh = new PShader(this, POOL_VERT, POOL_FRAG);
   poolBright = new PShader(this, POST_VERT, POOL_BRIGHT);
@@ -1191,6 +1280,7 @@ void initPools() {
   poolDummy.loadPixels();
   java.util.Arrays.fill(poolDummy.pixels, color(255));
   poolDummy.updatePixels();
+  makePoolFaceAtlas();
 }
 
 PGraphics poolDataBuffer(int w, int h) {       // exact data texture: no multisampling, no blending
@@ -1772,6 +1862,7 @@ void packPools() {
     poolMapTex.pixels[j * POOL_GRID + i] = (ec << 24) | (code << 16) | (lc << 8) | sc;
   }
   poolMapTex.updatePixels();
+  placePoolFaces();
 }
 
 // =====================================================================
@@ -1982,6 +2073,7 @@ void startPools() {
 
 void poolKey(int kc) {
   if (kc == 'C') crouchToggle = !crouchToggle;
+  if (kc == 'P') pauseGame();
 }
 
 void updatePools(float dt) {
@@ -2091,6 +2183,12 @@ void poolCamera(PShader sh, int w, int h, PVector eye, PVector F, PVector R, PVe
   sh.set("pixAng", 2 * tanY / h);
   sh.set("camAmb", poolCamAmb);
   sh.set("wakes", wk, 4);
+  sh.set("faceA", poolFaceA, 4);
+  sh.set("faceB", poolFaceB, 4);
+  sh.set("faceCount", poolFaceN);
+  sh.set("faceSlots", (float) NAMES.length);
+  sh.set("faceAtlas", poolFaceAtlas);
+  sh.set("faceTexel", 1.0 / poolFaceAtlas.width, 1.0 / poolFaceAtlas.height);
 }
 
 void poolUpdateHaze(PVector eye) {
@@ -2366,7 +2464,7 @@ void drawPoolHUD() {
     v.text("POOLROOMS", cx, cy - 150);
     v.textFont(fontMono);
     v.textSize(15);
-    String help = "EXPLORAÇÃO LIVRE   ·   SHIFT CORRER   C AGACHAR   ESC SAIR";
+    String help = "EXPLORAÇÃO LIVRE   ·   SHIFT CORRER   C AGACHAR   ESC PAUSAR";
     v.fill(0, a * 0.7);
     v.text(help, cx + 1.5, cy - 98.5);
     v.fill(235, a);
@@ -2410,6 +2508,22 @@ void updatePoolAudio(float dt) {
   stepAmp.setValue(stepEnv);
   poolTone.setAmplitude(0.018 * (0.8 + 0.2 * sin(t * 0.21)));
   breathAmp.setValue(0);
+}
+
+// the pause menu: water, splashes, tone and the ambience hold still, then pick up where they were
+void pausePoolAudio() {
+  clickEnv = splashEnv = 0;
+  tickAmp.setValue(0);
+  if (poolSynthReady) {
+    poolWaterAmp.setValue(0);
+    poolSplashAmp.setValue(0);
+    poolTone.setAmplitude(0);
+  }
+  if (poolAmbience != null) poolAmbience.pause();
+}
+
+void resumePoolAudio() {
+  if (poolAmbience != null) poolAmbience.loop();
 }
 
 void stopPools() {
@@ -2646,7 +2760,8 @@ void poolMeterCamera(PGraphics target) {
 void poolScheduleLighting() {
   // Give gameplay the frame budget first. A single optional slice never controls resolution readiness.
   float budget=1000.0/RENDER_TARGET_FPS;
-  if(poolGpuSceneMs>0&&poolGpuSceneMs+max(poolGpuBakeMs,0.5)>budget*0.95&&(frameCount%30)!=0)return;
+  // A busy GPU still bakes every 4th frame, so the light keeps converging instead of hanging half-done.
+  if(poolGpuSceneMs>0&&poolGpuSceneMs+max(poolGpuBakeMs,0.5)>budget*0.95&&(frameCount%4)!=0)return;
   if((frameCount&1)==0)poolAdvanceLighting();
 }
 
